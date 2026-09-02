@@ -39,9 +39,9 @@ def get_ttu_facilities(preset: str):
             "short_code": "Library Lot",
             "permit_required": "Purple (Commuter Student)",
             "capacity": 340,
-            # Centered on paved surface stalls north of Volpe Library off Stadium Dr
-            "lat": 36.17885,
-            "lon": -85.50485,
+            # Physical curb-cut turn-in off Stadium Dr behind Volpe Library
+            "lat": 36.17755,
+            "lon": -85.50550,
             "walk_mins": 1.0,
         },
         {
