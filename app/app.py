@@ -3,7 +3,7 @@ Smart Campus Parking & Navigation Dashboard (Streamlit Cloud Production)
 
 Mobile-first campus navigation engine for Tennessee Tech commuters.
 Provides permit-filtered lot saturation, dynamic rerouting, destination walking metrics,
-and high-resolution satellite imagery with asphalt-calibrated lot centers.
+functional turn-by-turn GPS handoffs, and satellite imagery via pydeck TileLayer.
 """
 
 import os
@@ -39,7 +39,7 @@ def get_ttu_facilities(preset: str):
             "short_code": "Library Lot",
             "permit_required": "Purple (Commuter Student)",
             "capacity": 340,
-            # True asphalt center of surface stalls north of Volpe Library off Stadium Dr
+            # Centered on paved surface stalls north of Volpe Library off Stadium Dr
             "lat": 36.17885,
             "lon": -85.50485,
             "walk_mins": 1.0,
@@ -107,7 +107,7 @@ def get_ttu_facilities(preset: str):
         occupied_counts = [270, 410, 175, 120, 95, 80]
     elif "Event" in preset:
         occupied_counts = [335, 570, 215, 170, 138, 290]
-    else:  # Morning Peak default
+    else:  # Morning Peak
         occupied_counts = [326, 545, 185, 155, 65, 45]
 
     df = pd.DataFrame(lots)
@@ -131,7 +131,6 @@ def get_ttu_facilities(preset: str):
     return df
 
 
-# Verified ground-truth coordinates for core academic buildings
 campus_landmarks = pd.DataFrame([
     {"name": "Ashraf Islam Eng (AIEB)", "lat": 36.17765, "lon": -85.50615},
     {"name": "Volpe Library", "lat": 36.17780, "lon": -85.50495},
@@ -210,7 +209,7 @@ else:
     best_lot = None
 
 # -----------------------------------------------------------------------------
-# 4. Header & Dynamic GPS Guidance Strip
+# 4. Header & Live GPS Guidance Strip
 # -----------------------------------------------------------------------------
 st.title("🚗 TTU Smart Commuter Navigation")
 st.caption(
@@ -234,8 +233,15 @@ if best_lot is not None:
                 delta=f"{best_lot['capacity']} Total",
             )
         with c3:
-            if st.button("🗺️ Start GPS Route", use_container_width=True):
-                st.toast(f"Routing to {best_lot['name']} via primary campus entry...")
+            # Universal mobile GPS navigation deep-link
+            gps_nav_url = (
+                f"https://www.google.com/maps/dir/?api=1"
+                f"&destination={best_lot['lat']},{best_lot['lon']}"
+                f"&travelmode=driving"
+            )
+            st.link_button(
+                "🗺️ Start GPS Route", url=gps_nav_url, use_container_width=True
+            )
 
     primary_lot = facilities_df[facilities_df["id"] == "LOT-LIB"].iloc[0]
     if primary_lot["pct_full"] >= 90.0 and ai_reroute_enabled:
@@ -274,9 +280,17 @@ with col_lots:
                     f"**Walk Distance:** ~{lot['walk_mins']} min to core academic halls"
                 )
             with lc2:
+                lot_gps_url = (
+                    f"https://www.google.com/maps/dir/?api=1"
+                    f"&destination={lot['lat']},{lot['lon']}"
+                    f"&travelmode=driving"
+                )
                 if is_permitted and lot["pct_full"] < 90.0:
-                    st.button(
-                        "Route Here", key=f"btn_{lot['id']}", use_container_width=True
+                    st.link_button(
+                        "Route Here",
+                        url=lot_gps_url,
+                        key=f"btn_{lot['id']}",
+                        use_container_width=True,
                     )
                 elif not is_permitted:
                     st.caption("⚠️ Tier mismatch")
@@ -289,7 +303,17 @@ with col_map:
         "High-resolution satellite view with live stall status and building anchors."
     )
 
-    # High-visibility parking status circles
+    # 1. Base Satellite Imagery (via pydeck TileLayer, zero API keys required)
+    satellite_tile_layer = pdk.Layer(
+        "TileLayer",
+        data="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        min_zoom=0,
+        max_zoom=19,
+        tile_size=256,
+        pickable=False,
+    )
+
+    # 2. High-visibility parking status circles
     lot_pin_layer = pdk.Layer(
         "ScatterplotLayer",
         data=facilities_df,
@@ -302,7 +326,7 @@ with col_map:
         auto_highlight=True,
     )
 
-    # High-contrast capacity callout text for satellite background
+    # 3. High-contrast capacity callout text
     lot_text_layer = pdk.Layer(
         "TextLayer",
         data=facilities_df,
@@ -314,11 +338,11 @@ with col_map:
         get_pixel_offset=[0, -14],
         font_weight="bold",
         background=True,
-        get_background_color=[15, 23, 42, 210],
+        get_background_color=[15, 23, 42, 220],
         pickable=False,
     )
 
-    # Building landmark pins (Cyan)
+    # 4. Building landmark pins (Cyan)
     building_layer = pdk.Layer(
         "ScatterplotLayer",
         data=campus_landmarks,
@@ -341,7 +365,7 @@ with col_map:
         get_pixel_offset=[0, 8],
         font_weight="bold",
         background=True,
-        get_background_color=[30, 41, 59, 210],
+        get_background_color=[30, 41, 59, 220],
         pickable=False,
     )
 
@@ -349,33 +373,16 @@ with col_map:
         latitude=36.1775, longitude=-85.5058, zoom=15.8, pitch=0, bearing=0
     )
 
-    # Esri Satellite World Imagery raster tile spec
-    satellite_style = {
-        "version": 8,
-        "sources": {
-            "esri-satellite": {
-                "type": "raster",
-                "tiles": [
-                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                ],
-                "tileSize": 256,
-            }
-        },
-        "layers": [
-            {
-                "id": "esri-satellite-layer",
-                "type": "raster",
-                "source": "esri-satellite",
-                "minzoom": 0,
-                "maxzoom": 19,
-            }
-        ],
-    }
-
     st.pydeck_chart(
         pdk.Deck(
-            map_style=satellite_style,
-            layers=[building_layer, building_text_layer, lot_pin_layer, lot_text_layer],
+            map_style=None,
+            layers=[
+                satellite_tile_layer,
+                building_layer,
+                building_text_layer,
+                lot_pin_layer,
+                lot_text_layer,
+            ],
             initial_view_state=view_state,
             tooltip={
                 "text": "{name}\nPermit: {permit_required}\nOpen Spaces: {available} / {capacity}"
