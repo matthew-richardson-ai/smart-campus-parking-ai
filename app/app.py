@@ -2,8 +2,8 @@
 Smart Campus Parking & Navigation Dashboard (Streamlit Cloud Production)
 
 Mobile-first campus navigation engine for Tennessee Tech commuters.
-Provides permit-filtered lot saturation, dynamic rerouting, destination walking metrics,
-functional turn-by-turn GPS handoffs, and satellite imagery via pydeck TileLayer.
+Features tuition-integrated student permit lookup, locked role tiers (Purple/Gold),
+calibrated curb-cut GPS handoffs, and satellite wayfinding.
 """
 
 import os
@@ -27,9 +27,44 @@ st.set_page_config(
     page_title="EaglePark AI | TTU Smart Navigation", page_icon="🦅", layout="wide"
 )
 
+# -----------------------------------------------------------------------------
+# 1. Prototype University Identity & Permit Registry
+# -----------------------------------------------------------------------------
+# Simulated university records linking T-Number to tuition enrollment / employment
+PROTOTYPE_ACCOUNTS = {
+    "T00123456": {
+        "name": "Alex Mercer",
+        "role": "Enrolled Student (Tuition Covered)",
+        "permit": "Purple",
+        "has_permit": True,
+        "detail": "Included automatically in current semester tuition fees.",
+    },
+    "T00987654": {
+        "name": "Jordan Smith",
+        "role": "Enrolled Student (Tuition Covered)",
+        "permit": "Purple",
+        "has_permit": True,
+        "detail": "Included automatically in current semester tuition fees.",
+    },
+    "T00554433": {
+        "name": "Dr. E. Vance",
+        "role": "Faculty / Staff",
+        "permit": "Gold",
+        "has_permit": True,
+        "detail": "Verified Faculty/Staff annual permit assignment.",
+    },
+    "T00000000": {
+        "name": "Guest Commuter",
+        "role": "Unregistered / Visitor",
+        "permit": "None",
+        "has_permit": False,
+        "detail": "No active tuition or staff permit on file. High ticketing risk.",
+    },
+}
+
 
 # -----------------------------------------------------------------------------
-# 1. Ground-Truth Tennessee Tech Facilities & Buildings
+# 2. Ground-Truth Tennessee Tech Facilities (Asphalt & Curb-Cut Calibrated)
 # -----------------------------------------------------------------------------
 def get_ttu_facilities(preset: str):
     lots = [
@@ -37,7 +72,7 @@ def get_ttu_facilities(preset: str):
             "id": "LOT-LIB",
             "name": "Volpe Library North Lot",
             "short_code": "Library Lot",
-            "permit_required": "Purple (Commuter Student)",
+            "permit_required": "Purple",
             "capacity": 340,
             # Physical curb-cut turn-in off Stadium Dr behind Volpe Library
             "lat": 36.17755,
@@ -48,9 +83,9 @@ def get_ttu_facilities(preset: str):
             "id": "LOT-HOOPER",
             "name": "Hooper Eblen Center Lot",
             "short_code": "Hooper Lot",
-            "permit_required": "Purple (Commuter Student)",
+            "permit_required": "Purple",
             "capacity": 580,
-            # Primary commuter asphalt lot west of arena off Willow Ave
+            # Primary commuter entrance apron off Willow Ave
             "lat": 36.17750,
             "lon": -85.50930,
             "walk_mins": 5.0,
@@ -59,9 +94,9 @@ def get_ttu_facilities(preset: str):
             "id": "LOT-PEACH",
             "name": "Peachtree Commuter Lot",
             "short_code": "Peachtree",
-            "permit_required": "Purple (Commuter Student)",
+            "permit_required": "Purple",
             "capacity": 220,
-            # Paved lot on Peachtree Ave between 7th and 8th St
+            # Paved lot entrance on Peachtree Ave between 7th and 8th St
             "lat": 36.17360,
             "lon": -85.50390,
             "walk_mins": 4.5,
@@ -70,7 +105,7 @@ def get_ttu_facilities(preset: str):
             "id": "LOT-ASHBURN",
             "name": "Ashburn Drive Lot",
             "short_code": "Ashburn Lot",
-            "permit_required": "Gold (Faculty / Staff)",
+            "permit_required": "Gold",
             "capacity": 175,
             # Faculty parking north of Bryan Fine Arts along Ashburn Dr
             "lat": 36.17630,
@@ -81,9 +116,9 @@ def get_ttu_facilities(preset: str):
             "id": "LOT-BELL",
             "name": "Bell Hall / 10th St Lot",
             "short_code": "Bell Lot",
-            "permit_required": "Purple (Commuter Student)",
+            "permit_required": "Purple",
             "capacity": 140,
-            # Surface lot directly north of Bell Hall on 10th St
+            # Entrance curb cut across from Bell Hall along 10th St
             "lat": 36.17515,
             "lon": -85.50790,
             "walk_mins": 6.0,
@@ -92,9 +127,9 @@ def get_ttu_facilities(preset: str):
             "id": "LOT-TECH-VILLAGE",
             "name": "Tech Village Overflow Lot",
             "short_code": "Tech Village",
-            "permit_required": "Purple (Commuter Student)",
+            "permit_required": "Purple",
             "capacity": 320,
-            # North overflow lot on W 12th St
+            # North commuter overflow along W 12th St
             "lat": 36.18240,
             "lon": -85.51160,
             "walk_mins": 8.0,
@@ -107,7 +142,7 @@ def get_ttu_facilities(preset: str):
         occupied_counts = [270, 410, 175, 120, 95, 80]
     elif "Event" in preset:
         occupied_counts = [335, 570, 215, 170, 138, 290]
-    else:  # Morning Peak
+    else:  # Morning Peak default
         occupied_counts = [326, 545, 185, 155, 65, 45]
 
     df = pd.DataFrame(lots)
@@ -117,10 +152,10 @@ def get_ttu_facilities(preset: str):
 
     def get_tier(pct):
         if pct >= 90.0:
-            return "SATURATED", [239, 68, 68, 240]  # Bright Red
+            return "SATURATED", [239, 68, 68, 240]
         elif pct >= 75.0:
-            return "FILLING FAST", [245, 158, 11, 240]  # Bright Amber
-        return "AVAILABLE", [34, 197, 94, 240]  # Bright Green
+            return "FILLING FAST", [245, 158, 11, 240]
+        return "AVAILABLE", [34, 197, 94, 240]
 
     tiers = df["pct_full"].apply(get_tier)
     df["status"] = [t[0] for t in tiers]
@@ -144,31 +179,44 @@ campus_landmarks = pd.DataFrame([
 building_names = campus_landmarks["name"].tolist()
 
 # -----------------------------------------------------------------------------
-# 2. Driver Preferences & Sidebar Controls
+# 3. Sidebar: Non-Editable Permit Verification & Simulation Controls
 # -----------------------------------------------------------------------------
 st.sidebar.title("🦅 EaglePark Mobile Nav")
 
-st.sidebar.subheader("Driver Profile & Destination")
-user_permit = st.sidebar.selectbox(
-    "Your Parking Permit",
-    [
-        "Purple (Commuter Student)",
-        "Gold (Faculty / Staff)",
-        "Red (Residence Hall)",
-        "Visitor / Open",
-    ],
-    help="Filters lots by permit tier to eliminate compliance violations.",
+st.sidebar.subheader("TTU Identity & Permit Sync")
+selected_t_number = st.sidebar.selectbox(
+    "Select Student / Staff Account",
+    options=list(PROTOTYPE_ACCOUNTS.keys()),
+    index=0,
+    format_func=lambda x: (
+        f"{x} - {PROTOTYPE_ACCOUNTS[x]['name']} ({PROTOTYPE_ACCOUNTS[x]['permit']})"
+    ),
 )
 
+current_account = PROTOTYPE_ACCOUNTS[selected_t_number]
+user_permit = current_account["permit"]
+has_valid_permit = current_account["has_permit"]
+
+# Non-editable verified permit badge
+if user_permit == "Purple":
+    st.sidebar.success(f"🟣 **Permit Tier: PURPLE**\n\n*Auto-Covered by Tuition*")
+elif user_permit == "Gold":
+    st.sidebar.warning(f"🟡 **Permit Tier: GOLD**\n\n*Faculty / Staff Authorized*")
+else:
+    st.sidebar.error(
+        f"⚪ **No Active Permit**\n\n*Parking in Purple/Gold causes citation*"
+    )
+
+st.sidebar.caption(current_account["detail"])
+
+st.sidebar.divider()
+st.sidebar.subheader("Navigation Destination")
 selected_destination = st.sidebar.selectbox(
-    "Campus Destination",
-    options=building_names,
-    index=0,
-    help="Calibrated campus academic destinations.",
+    "Campus Destination", options=building_names, index=0
 )
 
 st.sidebar.divider()
-st.sidebar.subheader("Simulation Presets")
+st.sidebar.subheader("Traffic Simulation")
 scenario = st.sidebar.selectbox(
     "Campus Rush Preset",
     [
@@ -182,7 +230,7 @@ scenario = st.sidebar.selectbox(
 ai_reroute_enabled = st.sidebar.toggle(
     "Dynamic Rerouting Guard",
     value=True,
-    help="Diverts drivers before arrival if current target exceeds 90% saturation.",
+    help="Diverts drivers before arrival if target reaches >=90% capacity.",
 )
 
 st.sidebar.divider()
@@ -195,25 +243,32 @@ max_radius = st.sidebar.slider("Detour Radius (km)", 0.5, 3.0, 1.2, 0.1)
 facilities_df = get_ttu_facilities(scenario)
 
 # -----------------------------------------------------------------------------
-# 3. Routing Decision Engine
+# 4. Routing Decision Engine
 # -----------------------------------------------------------------------------
-permitted_lots = facilities_df[facilities_df["permit_required"] == user_permit].copy()
-
-if not permitted_lots.empty:
-    valid_alternatives = permitted_lots[permitted_lots["pct_full"] < 90.0]
-    if not valid_alternatives.empty:
-        best_lot = valid_alternatives.sort_values(by="walk_mins").iloc[0]
+if has_valid_permit:
+    permitted_lots = facilities_df[
+        facilities_df["permit_required"] == user_permit
+    ].copy()
+    if not permitted_lots.empty:
+        valid_alternatives = permitted_lots[permitted_lots["pct_full"] < 90.0]
+        if not valid_alternatives.empty:
+            best_lot = valid_alternatives.sort_values(by="walk_mins").iloc[0]
+        else:
+            best_lot = permitted_lots.sort_values(by="available", ascending=False).iloc[
+                0
+            ]
     else:
-        best_lot = permitted_lots.sort_values(by="available", ascending=False).iloc[0]
+        best_lot = None
 else:
     best_lot = None
 
 # -----------------------------------------------------------------------------
-# 4. Header & Live GPS Guidance Strip
+# 5. Header & Dynamic Navigation Guidance
 # -----------------------------------------------------------------------------
 st.title("🚗 TTU Smart Commuter Navigation")
 st.caption(
-    f"Permit: **{user_permit}** | En Route To: **{selected_destination}** | Preset: **{scenario}**"
+    f"User: **{current_account['name']}** ({selected_t_number}) | "
+    f"Permit: **{user_permit}** | Destination: **{selected_destination}** | Window: **{scenario}**"
 )
 
 if best_lot is not None:
@@ -221,10 +276,10 @@ if best_lot is not None:
     with rec_box:
         c1, c2, c3 = st.columns([3, 1, 1])
         with c1:
-            st.success(f"📍 **Recommended Target:** Head to **{best_lot['name']}**")
+            st.success(f"📍 **Optimal Target:** Head to **{best_lot['name']}**")
             st.write(
                 f"**{best_lot['available']} stalls open** ({best_lot['pct_full']:.0f}% full) · "
-                f"Est. Walk to Destination: **{best_lot['walk_mins']:.1f} mins**"
+                f"Walk to {selected_destination}: **{best_lot['walk_mins']:.1f} mins**"
             )
         with c2:
             st.metric(
@@ -233,7 +288,6 @@ if best_lot is not None:
                 delta=f"{best_lot['capacity']} Total",
             )
         with c3:
-            # Universal mobile GPS navigation deep-link
             gps_nav_url = (
                 f"https://www.google.com/maps/dir/?api=1"
                 f"&destination={best_lot['lat']},{best_lot['lon']}"
@@ -244,16 +298,24 @@ if best_lot is not None:
             )
 
     primary_lot = facilities_df[facilities_df["id"] == "LOT-LIB"].iloc[0]
-    if primary_lot["pct_full"] >= 90.0 and ai_reroute_enabled:
+    if (
+        primary_lot["pct_full"] >= 90.0
+        and ai_reroute_enabled
+        and user_permit == "Purple"
+    ):
         st.warning(
             f"⚠️ **Reroute Alert:** {primary_lot['name']} is at {primary_lot['pct_full']:.0f}% capacity. "
-            f"Diverted to **{best_lot['name']}** to prevent entrance bottlenecking."
+            f"Diverted to **{best_lot['name']}** to eliminate entrance bottlenecking."
         )
+elif not has_valid_permit:
+    st.error(
+        "🚨 **No Permit Found on Account:** You are at risk of campus citations in both Purple and Gold zones. Contact the Parking Office at Roaden University Center."
+    )
 
 st.divider()
 
 # -----------------------------------------------------------------------------
-# 5. Two-Column Dashboard Layout
+# 6. Two-Column Dashboard Layout
 # -----------------------------------------------------------------------------
 col_lots, col_map = st.columns([3, 2])
 
@@ -264,7 +326,9 @@ with col_lots:
     for _, lot in facilities_df.iterrows():
         is_permitted = lot["permit_required"] == user_permit
         permit_badge = (
-            "✅ Authorized" if is_permitted else f"🚫 Requires {lot['permit_required']}"
+            f"✅ Authorized ({lot['permit_required']})"
+            if is_permitted
+            else f"🚫 Requires {lot['permit_required']}"
         )
 
         with st.expander(
@@ -275,7 +339,7 @@ with col_lots:
             with lc1:
                 st.progress(lot["pct_full"] / 100)
                 st.write(
-                    f"**Permit Tier:** {lot['permit_required']} ({permit_badge})  \n"
+                    f"**Permit Tier:** {lot['permit_required']} Zone ({permit_badge})  \n"
                     f"**Occupancy:** {lot['occupied']} / {lot['capacity']} spaces full  \n"
                     f"**Walk Distance:** ~{lot['walk_mins']} min to core academic halls"
                 )
@@ -303,7 +367,6 @@ with col_map:
         "High-resolution satellite view with live stall status and building anchors."
     )
 
-    # 1. Base Satellite Imagery (via pydeck TileLayer, zero API keys required)
     satellite_tile_layer = pdk.Layer(
         "TileLayer",
         data="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -313,7 +376,6 @@ with col_map:
         pickable=False,
     )
 
-    # 2. High-visibility parking status circles
     lot_pin_layer = pdk.Layer(
         "ScatterplotLayer",
         data=facilities_df,
@@ -326,7 +388,6 @@ with col_map:
         auto_highlight=True,
     )
 
-    # 3. High-contrast capacity callout text
     lot_text_layer = pdk.Layer(
         "TextLayer",
         data=facilities_df,
@@ -342,7 +403,6 @@ with col_map:
         pickable=False,
     )
 
-    # 4. Building landmark pins (Cyan)
     building_layer = pdk.Layer(
         "ScatterplotLayer",
         data=campus_landmarks,
@@ -385,7 +445,7 @@ with col_map:
             ],
             initial_view_state=view_state,
             tooltip={
-                "text": "{name}\nPermit: {permit_required}\nOpen Spaces: {available} / {capacity}"
+                "text": "{name}\nPermit Required: {permit_required}\nOpen Spaces: {available} / {capacity}"
             },
         )
     )
@@ -394,7 +454,7 @@ with col_map:
     )
 
 # -----------------------------------------------------------------------------
-# 6. Commuter Rideshare Cohorts
+# 7. Commuter Rideshare Cohorts
 # -----------------------------------------------------------------------------
 st.divider()
 st.subheader(f"👥 Rideshare Carpool Matching ({selected_arrival_time} Arrival Window)")
