@@ -6,7 +6,9 @@ metric to group student commuters by geographic proximity. It identifies high-de
 pickup pockets to minimize detour distance for driver vehicles.
 """
 
+import os
 import numpy as np
+import pandas as pd
 from sklearn.cluster import DBSCAN
 
 
@@ -35,51 +37,80 @@ def match_commuter_rideshares(
     dict
         Mapping of {cluster_id: [student_indices]} containing only valid groupings (minimum 2 commuters).
     """
-    # Mean radius of Earth in kilometers (WGS-84 approximation)
     EARTH_RADIUS_KM = 6371.0088
-
-    # Scikit-learn's Haversine metric requires distance threshold (epsilon) expressed in radians.
-    # Formula: radians = arc_length (km) / sphere_radius (km)
     epsilon_radians = max_pickup_radius_km / EARTH_RADIUS_KM
-
-    # Convert coordinates from degrees to radians as required by the Haversine metric
     coords_in_radians = np.radians(student_coords)
 
-    # min_samples=2 enforces that at least two commuters must be nearby to constitute a valid rideshare
     clustering_model = DBSCAN(
         eps=epsilon_radians, min_samples=2, metric="haversine"
     ).fit(coords_in_radians)
 
     matches = {}
     for student_idx, cluster_id in enumerate(clustering_model.labels_):
-        # A label of -1 indicates an outlier/noise point (no convenient carpool within radius)
         if cluster_id != -1:
             matches.setdefault(cluster_id, []).append(student_idx)
 
     return matches
 
 
+def match_commuters_by_timetable(
+    csv_path: str, target_time: str = "08:30", max_radius_km: float = 1.2
+) -> pd.DataFrame:
+    """
+    Filters synthetic commuters targeting the same arrival window and applies spatial clustering.
+    Maps the resulting cluster labels back to the DataFrame for easy analysis.
+    """
+    df = pd.read_csv(csv_path)
+
+    # Isolate only the students arriving at the target time
+    cohort = df[df["target_arrival_time"] == target_time].copy()
+
+    if cohort.empty:
+        return cohort
+
+    # Extract coordinates for the clustering algorithm
+    coords = cohort[["home_lat", "home_lon"]].to_numpy()
+
+    # Run DBSCAN directly to retrieve labels for the DataFrame
+    EARTH_RADIUS_KM = 6371.0088
+    eps_rad = max_radius_km / EARTH_RADIUS_KM
+    clustering = DBSCAN(eps=eps_rad, min_samples=2, metric="haversine").fit(
+        np.radians(coords)
+    )
+
+    # -1 indicates noise/isolated commuters; integers represent valid carpool groups
+    cohort["carpool_group"] = clustering.labels_
+
+    return cohort
+
+
 if __name__ == "__main__":
-    # Test coordinates representing student residences near the campus area
-    # Index 0 and 1 are within walking distance of each other; Index 2 is an outlier.
-    sample_commuter_coords = np.array([
-        [36.1628, -85.5016],  # Student A (Apartment Complex 1)
-        [36.1632, -85.5022],  # Student B (Neighboring Complex)
-        [
-            36.1850,
-            -85.4500,
-        ],  # Student C (Isolated Commuter, should be classified as noise)
-    ])
+    data_file = "simulation/data/commuter_schedules.csv"
 
-    print("Running DBSCAN commuter clustering dry-run...")
-    clusters = match_commuter_rideshares(
-        sample_commuter_coords, max_pickup_radius_km=1.0
-    )
-    print(f"Identified Carpool Groups: {clusters}")
+    if os.path.exists(data_file):
+        print(f"Loading synthetic dataset from {data_file}...")
+        results = match_commuters_by_timetable(
+            data_file, target_time="08:30", max_radius_km=1.2
+        )
 
-    # Verification: Student A (0) and Student B (1) should pair in Cluster 0; Student C (2) should be excluded.
-    assert 0 in clusters, "Expected at least one valid cluster formed."
-    assert set(clusters[0]) == {0, 1}, "Students 0 and 1 should be paired together."
-    print(
-        "Self-test passed: Outlier correctly excluded and nearby pair successfully grouped."
-    )
+        valid_groups = results[results["carpool_group"] != -1]
+        noise_count = (results["carpool_group"] == -1).sum()
+
+        print(f"\nTotal students arriving at 08:30: {len(results)}")
+        print(
+            f"Students successfully grouped: {len(valid_groups)} across {valid_groups['carpool_group'].nunique()} carpools"
+        )
+        print(f"Commuters isolated/unmatched (noise): {noise_count}")
+
+        if not valid_groups.empty:
+            print("\nSample Carpool Group 0:")
+            print(
+                valid_groups[valid_groups["carpool_group"] == 0][
+                    ["student_id", "has_car", "seats_available", "home_lat", "home_lon"]
+                ]
+            )
+    else:
+        print(f"Dataset {data_file} not found.")
+        print(
+            "Please run 'python simulation/generate_commuters.py' to generate the data."
+        )
