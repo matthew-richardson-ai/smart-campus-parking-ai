@@ -2,23 +2,28 @@
 Smart Campus Parking & Navigation Dashboard (Streamlit Prototype)
 
 This module serves as the primary GUI and simulation sandbox for demonstrating
-dynamic parking redistribution and rideshare matching. It exposes high-level
-system states, environmental variables, and simulated student driver views
-to evaluate Human-in-the-Loop decision flows without requiring live camera hardware.
+dynamic parking redistribution and rideshare matching. It reads synthetic student
+commuter schedules and executes DBSCAN spatial clustering to visualize real-time
+rideshare pairing alongside lot saturation telemetry.
 """
 
+import os
+import sys
 import streamlit as st
 import pandas as pd
 import numpy as np
+import pydeck as pdk
 
-# Configure the browser tab title and default to wide mode so our map and telemetry cards sit side-by-side
-st.set_page_config(page_title="Campus AI Traffic & Parking Simulator", layout="wide")
+# Ensure python can locate the local simulation module regardless of execution directory
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from simulation.clustering import match_commuters_by_timetable
+
+# Configure page metadata and wide layout
+st.set_page_config(page_title="Campus AI Traffic & Rideshare Engine", layout="wide")
 
 # -----------------------------------------------------------------------------
 # 1. Session State Initialization
 # -----------------------------------------------------------------------------
-# Streamlit re-executes this entire script on every user interaction. We store
-# mutable state variables in `st.session_state` so user changes persist across runs.
 if "traffic_condition" not in st.session_state:
     st.session_state.traffic_condition = "Morning Rush (High Congestion)"
 
@@ -26,51 +31,58 @@ if "traffic_condition" not in st.session_state:
 # -----------------------------------------------------------------------------
 # 2. Interactive Control Sidebar
 # -----------------------------------------------------------------------------
-st.sidebar.title("🎛️ Simulation Control Panel")
+st.sidebar.title("🎛️ Simulation Controls")
 
-# These presets allow us to jump between distinct operational profiles during
-# our presentation without manually tweaking each lot's vehicle counts.
 scenario = st.sidebar.selectbox(
-    "Select Scenario Preset",
+    "Campus Traffic Scenario",
     [
         "Morning Rush (High Congestion)",
         "Midday Transition (Moderate)",
         "Evening / Weekend (Low Traffic)",
         "Game Day / Campus Event (Critical Saturation)",
     ],
-    help="Simulates distinct traffic distributions reflecting academic bell schedules.",
+    help="Simulates distinct vehicle demand spikes corresponding to academic class blocks.",
 )
 
 st.sidebar.subheader("Environmental Variables")
-
-# Weather impacts vision-based camera inference accuracy in real edge deployments.
 weather = st.sidebar.selectbox(
     "Weather Condition",
     ["Clear", "Heavy Rain (Vision Degraded)", "Dense Fog"],
-    help="Simulates optical occlusion and camera confidence degradation.",
+    help="Models camera optical distortion, glare, and edge-vision confidence loss.",
 )
 
-# This toggle simulates our Walk-stage Human-in-the-Loop dynamic routing feature.
-# When disabled, drivers behave normally without AI guidance and pile into saturated lots.
 ai_reroute_enabled = st.sidebar.toggle(
     "Enable Dynamic AI Rerouting",
     value=True,
-    help="When enabled, in-transit drivers are diverted once a lot hits >=90% capacity.",
+    help="When enabled, in-transit drivers are automatically diverted if target lots reach >=90% capacity.",
+)
+
+st.sidebar.divider()
+st.sidebar.subheader("Commuter Clustering Parameters")
+selected_arrival_time = st.sidebar.selectbox(
+    "Target Class Arrival Block",
+    ["07:45", "08:30", "09:30", "10:30"],
+    index=1,
+    help="Filters commuters needing to reach campus within this arrival window.",
+)
+
+max_radius = st.sidebar.slider(
+    "Max Pickup Detour Radius (km)",
+    min_value=0.5,
+    max_value=3.0,
+    value=1.2,
+    step=0.1,
+    help="Defines DBSCAN epsilon (maximum spherical distance allowed between carpool riders).",
 )
 
 
 # -----------------------------------------------------------------------------
-# 3. Dynamic State Generation
+# 3. Dynamic Parking Lot Data Generator
 # -----------------------------------------------------------------------------
 def get_simulated_lot_data(preset: str, weather_mode: str):
     """
-    Synthesizes real-time parking telemetry based on the active scenario and weather.
-
-    In a full deployment, this data would arrive via edge-vision inference streams
-    from perimeter camera nodes. Here, we model realistic congestion distributions
-    across three core campus parking hubs.
+    Synthesizes real-time parking lot occupancy based on scenario presets.
     """
-    # Baseline coordinates and parking capacities for campus lots
     lots = [
         {
             "id": "LOT-A",
@@ -95,21 +107,16 @@ def get_simulated_lot_data(preset: str, weather_mode: str):
         },
     ]
 
-    # Map presets to expected vehicle distribution patterns
     if "Low" in preset:
-        # Off-peak: minimal demand, negligible search latency
         occupancies = [65, 120, 10]
         avg_wait = "0 mins"
     elif "Moderate" in preset:
-        # Midday: classes rotating; steady turnover keeps queues manageable
         occupancies = [210, 380, 45]
         avg_wait = "4.5 mins"
     elif "Critical" in preset:
-        # Special event: campus-wide saturation forcing reliance on peripheral lots
         occupancies = [298, 545, 195]
         avg_wait = "18.2 mins"
-    else:
-        # Morning Rush: commuter surge heavily favors North Lot due to academic building proximity
+    else:  # Morning Rush default
         occupancies = [285, 410, 30]
         avg_wait = "9.8 mins"
 
@@ -117,13 +124,12 @@ def get_simulated_lot_data(preset: str, weather_mode: str):
     df["occupied"] = occupancies
     df["pct_full"] = (df["occupied"] / df["capacity"]) * 100
 
-    # Simulate computer vision confidence loss: precipitation and fog cause lens flare,
-    # occlusion, and glare that lower spot-detection certainty.
+    # Degrade confidence based on simulated visibility
     if weather_mode == "Clear":
         confidence = 98.5
     elif "Rain" in weather_mode:
         confidence = 82.1
-    else:  # Fog
+    else:
         confidence = 74.0
 
     df["sensor_confidence"] = confidence
@@ -132,127 +138,226 @@ def get_simulated_lot_data(preset: str, weather_mode: str):
 
 lot_data, wait_time = get_simulated_lot_data(scenario, weather)
 
+# -----------------------------------------------------------------------------
+# 4. Clustered Commuter Data Pipeline
+# -----------------------------------------------------------------------------
+csv_path = "simulation/data/commuter_schedules.csv"
+if os.path.exists(csv_path):
+    clustered_commuters = match_commuters_by_timetable(
+        csv_path=csv_path, target_time=selected_arrival_time, max_radius_km=max_radius
+    )
+    valid_carpools = clustered_commuters[clustered_commuters["carpool_group"] != -1]
+    num_matched_students = len(valid_carpools)
+    num_distinct_groups = valid_carpools["carpool_group"].nunique()
+else:
+    clustered_commuters = pd.DataFrame()
+    num_matched_students = 0
+    num_distinct_groups = 0
+
 
 # -----------------------------------------------------------------------------
-# 4. Main Executive Telemetry View
+# 5. Header & Executive Metric Strip
 # -----------------------------------------------------------------------------
 st.title("🚗 Smart Campus Parking & Navigation Dashboard")
 st.caption(
     f"Active Scenario: **{scenario}** | Edge Vision Confidence: **{lot_data['sensor_confidence'].iloc[0]}%**"
 )
 
-# High-level KPIs to immediately communicate system health during presentations
 m1, m2, m3, m4 = st.columns(4)
 total_capacity = lot_data["capacity"].sum()
 total_occupied = lot_data["occupied"].sum()
 system_pct = (total_occupied / total_capacity) * 100
 
 m1.metric(
-    label="Campus-Wide Occupancy",
+    label="Campus Lot Saturation",
     value=f"{total_occupied} / {total_capacity}",
-    delta=f"{system_pct:.1f}% Saturation",
+    delta=f"{system_pct:.1f}% Capacity",
 )
-
-# Demonstrates the tangible ROI of the routing algorithm on search latency
 m2.metric(
     label="Avg. Time-to-Park",
     value=wait_time,
-    delta="-3.2 min with AI" if ai_reroute_enabled else "+4.5 min delay",
+    delta="-3.2 min with AI" if ai_reroute_enabled else "+4.5 min queuing",
     delta_color="normal" if ai_reroute_enabled else "inverse",
 )
-
 m3.metric(
-    label="Rerouted Vehicles (In-Transit)",
-    value="42 Cars" if ai_reroute_enabled else "0 (Reroute Disabled)",
-    delta="Load balanced" if ai_reroute_enabled else "Queuing at gates",
+    label="In-Transit Reroutes",
+    value="42 Diverted" if ai_reroute_enabled else "0 (Disabled)",
+    delta="Balancing overflow" if ai_reroute_enabled else "Gate bottlenecks",
     delta_color="normal" if ai_reroute_enabled else "off",
 )
-
 m4.metric(
-    label="Active Carpools Matched",
-    value="18 Groups" if "Rush" in scenario or "Critical" in scenario else "4 Groups",
-    delta="36 Single-occupant trips removed",
+    label=f"Active Carpools ({selected_arrival_time})",
+    value=f"{num_distinct_groups} Groups",
+    delta=f"{num_matched_students} Students paired",
 )
 
 st.divider()
 
 # -----------------------------------------------------------------------------
-# 5. Spatial Map & Facility Breakdown
+# 6. Main Dashboard Tabs
 # -----------------------------------------------------------------------------
-col_map, col_details = st.columns([2, 1])
+tab_map, tab_driver, tab_rideshare = st.tabs([
+    "📍 Interactive Campus & Commuter Map",
+    "📱 Driver Navigation View",
+    "👥 DBSCAN Rideshare Cohorts",
+])
 
-with col_map:
-    st.subheader("Live Campus Facility Map")
-    # Native Streamlit map rendering lot coordinates scaled by current vehicle count
-    st.map(lot_data, latitude="lat", longitude="lon", size="occupied", zoom=14)
+with tab_map:
+    col_view, col_status = st.columns([2, 1])
 
-with col_details:
-    st.subheader("Facility Saturation Levels")
-    for _, row in lot_data.iterrows():
-        pct = row["pct_full"]
-        st.write(f"**{row['name']}**")
+    with col_view:
+        st.subheader("Spatial Saturation & Commuter Hubs")
 
-        # Color & warning tiering based on operational thresholds
-        if pct >= 90.0:
-            st.progress(
-                pct / 100,
-                text=f"🚨 {row['occupied']}/{row['capacity']} ({pct:.0f}%) - SATURATED",
+        # Color mapping helper for DBSCAN clusters
+        palette = [
+            [230, 25, 75],  # Red
+            [60, 180, 75],  # Green
+            [255, 225, 25],  # Yellow
+            [0, 130, 200],  # Blue
+            [245, 130, 48],  # Orange
+            [145, 30, 180],  # Purple
+            [70, 240, 240],  # Cyan
+        ]
+
+        layers = []
+
+        # Layer 1: Campus Parking Facilities
+        parking_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=lot_data,
+            get_position=["lon", "lat"],
+            get_color="[255, 0, 0, 180]",
+            get_radius="occupied * 1.5",
+            pickable=True,
+            auto_highlight=True,
+        )
+        layers.append(parking_layer)
+
+        # Layer 2: Commuter Pickups (if dataset present)
+        if not clustered_commuters.empty:
+            # Assign RGB colors based on cluster label (-1 is grey noise)
+            def assign_color(group_id):
+                if group_id == -1:
+                    return [160, 160, 160, 120]
+                return palette[group_id % len(palette)] + [200]
+
+            plot_df = clustered_commuters.copy()
+            plot_df["color"] = plot_df["carpool_group"].apply(assign_color)
+            plot_df["radius"] = plot_df["has_car"].apply(lambda has: 90 if has else 45)
+
+            commuter_layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=plot_df,
+                get_position=["home_lon", "home_lat"],
+                get_color="color",
+                get_radius="radius",
+                pickable=True,
+                auto_highlight=True,
             )
-            if ai_reroute_enabled:
-                st.info(
-                    "⚡ *Automated Reroute Active:* Diverting incoming arrivals to East Overflow."
+            layers.append(commuter_layer)
+
+        view_state = pdk.ViewState(
+            latitude=36.1775, longitude=-85.5030, zoom=13, pitch=35
+        )
+
+        st.pydeck_chart(
+            pdk.Deck(
+                layers=layers,
+                initial_view_state=view_state,
+                tooltip={
+                    "text": "Lot/Commuter Telemetry: {name}\nCapacity/Group: {capacity}{carpool_group}"
+                },
+            )
+        )
+        st.caption(
+            "🔴 Red hubs = Campus parking lots (scaled by occupancy). 🔵 Multi-colored dots = Matched commuter carpools. ⚪ Grey dots = Isolated commuters (DBSCAN noise)."
+        )
+
+    with col_status:
+        st.subheader("Lot Saturation Telemetry")
+        for _, row in lot_data.iterrows():
+            pct = row["pct_full"]
+            st.write(f"**{row['name']}**")
+            if pct >= 90.0:
+                st.progress(
+                    pct / 100,
+                    text=f"🚨 {row['occupied']}/{row['capacity']} ({pct:.0f}%) - SATURATED",
                 )
-        elif pct >= 75.0:
-            st.progress(
-                pct / 100,
-                text=f"⚠️ {row['occupied']}/{row['capacity']} ({pct:.0f}%) - HIGH CONGESTION",
+                if ai_reroute_enabled:
+                    st.info(
+                        "⚡ *Automated Reroute Active:* Diverting incoming traffic to East Overflow."
+                    )
+            elif pct >= 75.0:
+                st.progress(
+                    pct / 100,
+                    text=f"⚠️ {row['occupied']}/{row['capacity']} ({pct:.0f}%) - HIGH CONGESTION",
+                )
+            else:
+                st.progress(
+                    pct / 100,
+                    text=f"✅ {row['occupied']}/{row['capacity']} ({pct:.0f}%) - AVAILABLE",
+                )
+
+with tab_driver:
+    st.subheader("In-Transit Driver Telemetry (Walk Stage Simulation)")
+    d_col1, d_col2 = st.columns([1, 1])
+
+    with d_col1:
+        target_lot = "North Commuter Lot"
+        lot_a_full = (
+            lot_data.loc[lot_data["id"] == "LOT-A", "pct_full"].values[0] >= 90.0
+        )
+
+        if lot_a_full and ai_reroute_enabled:
+            st.error(f"⚠️ Destination '{target_lot}' reached saturation (95% full)!")
+            st.success(
+                "🤖 Dynamic AI Reroute: Diverting to East Peripheral Overflow (15% full). Added walk time: +2 mins."
+            )
+        elif lot_a_full and not ai_reroute_enabled:
+            st.error(
+                f"⚠️ Destination '{target_lot}' is full. Drivers will experience gate delays."
             )
         else:
-            st.progress(
-                pct / 100,
-                text=f"✅ {row['occupied']}/{row['capacity']} ({pct:.0f}%) - SPOTS AVAILABLE",
+            st.success(
+                f"Clear route: Proceeding to {target_lot}. Open spaces verified via vision sensors."
             )
 
-st.divider()
-
-# -----------------------------------------------------------------------------
-# 6. Simulated Mobile Client Experience (Student Perspective)
-# -----------------------------------------------------------------------------
-st.subheader("📱 End-User Mobile View (In-Transit Driver)")
-driver_col1, driver_col2 = st.columns([1, 2])
-
-with driver_col1:
-    target_lot = "North Commuter Lot"
-    # Check if North Lot is saturated in current state
-    lot_a_is_saturated = (
-        lot_data.loc[lot_data["id"] == "LOT-A", "pct_full"].values[0] >= 90.0
-    )
-
-    # Illustrates the Human-in-the-Loop Walk stage:
-    # Instead of forcing an unexpected detour, the app transparently recommends
-    # an alternate destination before the driver reaches congested gates.
-    if lot_a_is_saturated and ai_reroute_enabled:
-        st.error(f"⚠️ Destination '{target_lot}' reached capacity (95% full)!")
-        st.success(
-            "🤖 AI Reroute Recommendation: Divert to East Peripheral Overflow (15% full). Added walk time: +2 mins."
+    with d_col2:
+        st.info(
+            "💡 **Human-in-the-Loop Walk Stage:** The driver retains final override authority on the suggested detour with a single tap, ensuring driver agency without sudden navigation disruptions."
         )
-    elif lot_a_is_saturated and not ai_reroute_enabled:
-        st.error(
-            f"⚠️ Destination '{target_lot}' is full. Anticipate significant gate queuing."
+
+with tab_rideshare:
+    st.subheader(f"DBSCAN Commuter Clusters for {selected_arrival_time} Arrival Window")
+    if not clustered_commuters.empty:
+        st.write(
+            f"**Total Cohort Size:** {len(clustered_commuters)} students | **Clustered into Carpools:** {num_matched_students} students across {num_distinct_groups} groups"
         )
+
+        col_c1, col_c2 = st.columns([2, 1])
+        with col_c1:
+            st.dataframe(
+                valid_carpools[
+                    [
+                        "carpool_group",
+                        "student_id",
+                        "has_car",
+                        "seats_available",
+                        "home_lat",
+                        "home_lon",
+                    ]
+                ].sort_values(by=["carpool_group", "has_car"], ascending=[True, False]),
+                use_container_width=True,
+            )
+        with col_c2:
+            st.metric(
+                "Excluded Outliers (Noise Points)",
+                f"{(clustered_commuters['carpool_group'] == -1).sum()} Commuters",
+            )
+            st.write(
+                "Commuters marked with cluster `-1` reside beyond the specified pickup radius threshold and will not create excessive driver detours."
+            )
     else:
-        st.success(f"Clear route: Proceeding to {target_lot}. Open spaces verified.")
-
-with driver_col2:
-    with st.expander("Connected Carpool Pairing Details", expanded=True):
-        st.caption(
-            "Matches computed via DBSCAN spatial clustering on student home coordinates and class arrival schedules."
-        )
-        st.table(
-            pd.DataFrame({
-                "Driver": ["Matthew R.", "Alex C."],
-                "Pickup Hub": ["West Commuter Zone", "Campus North Apts"],
-                "Matched Riders": [2, 3],
-                "Route Alignment Score": ["94%", "88%"],
-            })
+        st.warning(
+            "No synthetic commuter schedules found. Please run `simulation/generate_commuters.py`."
         )
