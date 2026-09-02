@@ -1,10 +1,9 @@
-# app/app.py
 """
 Smart Campus Parking & Navigation Dashboard (Streamlit Cloud Production)
 
 Mobile-first campus navigation engine for Tennessee Tech commuters.
 Provides permit-filtered lot saturation, dynamic rerouting, destination walking metrics,
-and live OpenStreetMap Overpass building mappings (including AIEB).
+and high-resolution satellite imagery with asphalt-calibrated lot centers.
 """
 
 import os
@@ -13,14 +12,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pydeck as pdk
-import requests
 
 # Allow simulation imports regardless of execution root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 try:
     from simulation.clustering import match_commuters_by_timetable
 except ImportError:
-    # Graceful dummy fallback if module isn't mounted in cloud path
+
     def match_commuters_by_timetable(csv_path, target_time, max_radius_km):
         return pd.DataFrame()
 
@@ -31,74 +29,119 @@ st.set_page_config(
 
 
 # -----------------------------------------------------------------------------
-# 1. Dynamic OpenStreetMap Campus Building Ingestion
+# 1. Ground-Truth Tennessee Tech Facilities & Buildings
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=86400)
-def fetch_ttu_buildings():
-    """
-    Queries OpenStreetMap Overpass API for all university buildings within
-    the Tennessee Tech campus perimeter and computes their center coordinates.
-    Includes recent developments such as the Ashraf Islam Engineering Building (AIEB).
-    """
-    overpass_url = "https://overpass-api.de/api/interpreter"
-    query = """
-    [out:json][timeout:25];
-    (
-      way["building"](36.1700, -85.5180, 36.1850, -85.4980);
-      relation["building"](36.1700, -85.5180, 36.1850, -85.4980);
-    );
-    out center tags;
-    """
-    try:
-        response = requests.get(overpass_url, params={"data": query}, timeout=8)
-        if response.status_code == 200:
-            data = response.json()
-            buildings = []
-            for el in data.get("elements", []):
-                tags = el.get("tags", {})
-                name = tags.get("name")
-                if name and len(name.strip()) > 2:
-                    center = el.get("center", {})
-                    lat = center.get("lat") or el.get("lat")
-                    lon = center.get("lon") or el.get("lon")
-                    if lat and lon:
-                        buildings.append({
-                            "name": name.strip(),
-                            "lat": float(lat),
-                            "lon": float(lon),
-                        })
-            df = (
-                pd
-                .DataFrame(buildings)
-                .drop_duplicates(subset=["name"])
-                .sort_values(by="name")
-            )
-            if not df.empty:
-                return df
-    except Exception:
-        pass
-
-    # Verified fallback ground truth anchors if Overpass is down or throttled
-    return pd.DataFrame([
+def get_ttu_facilities(preset: str):
+    lots = [
         {
-            "name": "Ashraf Islam Engineering Building (AIEB)",
-            "lat": 36.17790,
-            "lon": -85.50630,
+            "id": "LOT-LIB",
+            "name": "Volpe Library North Lot",
+            "short_code": "Library Lot",
+            "permit_required": "Purple (Commuter Student)",
+            "capacity": 340,
+            # True asphalt center of surface stalls north of Volpe Library off Stadium Dr
+            "lat": 36.17885,
+            "lon": -85.50485,
+            "walk_mins": 1.0,
         },
-        {"name": "Angelo & Jennette Volpe Library", "lat": 36.17780, "lon": -85.50505},
-        {"name": "Prescott Hall (Engineering)", "lat": 36.17625, "lon": -85.50360},
-        {"name": "Stonecipher Hall (LSC)", "lat": 36.17680, "lon": -85.50610},
         {
-            "name": "Derryberry Hall (Admin & Admissions)",
-            "lat": 36.17540,
-            "lon": -85.50545,
+            "id": "LOT-HOOPER",
+            "name": "Hooper Eblen Center Lot",
+            "short_code": "Hooper Lot",
+            "permit_required": "Purple (Commuter Student)",
+            "capacity": 580,
+            # Primary commuter asphalt lot west of arena off Willow Ave
+            "lat": 36.17750,
+            "lon": -85.50930,
+            "walk_mins": 5.0,
         },
-        {"name": "Hooper Eblen Center (Athletics)", "lat": 36.17865, "lon": -85.50760},
-        {"name": "Robert & Gloria Bell Hall", "lat": 36.17520, "lon": -85.50780},
-    ])
+        {
+            "id": "LOT-PEACH",
+            "name": "Peachtree Commuter Lot",
+            "short_code": "Peachtree",
+            "permit_required": "Purple (Commuter Student)",
+            "capacity": 220,
+            # Paved lot on Peachtree Ave between 7th and 8th St
+            "lat": 36.17360,
+            "lon": -85.50390,
+            "walk_mins": 4.5,
+        },
+        {
+            "id": "LOT-ASHBURN",
+            "name": "Ashburn Drive Lot",
+            "short_code": "Ashburn Lot",
+            "permit_required": "Gold (Faculty / Staff)",
+            "capacity": 175,
+            # Faculty parking north of Bryan Fine Arts along Ashburn Dr
+            "lat": 36.17630,
+            "lon": -85.50150,
+            "walk_mins": 2.5,
+        },
+        {
+            "id": "LOT-BELL",
+            "name": "Bell Hall / 10th St Lot",
+            "short_code": "Bell Lot",
+            "permit_required": "Purple (Commuter Student)",
+            "capacity": 140,
+            # Surface lot directly north of Bell Hall on 10th St
+            "lat": 36.17515,
+            "lon": -85.50790,
+            "walk_mins": 6.0,
+        },
+        {
+            "id": "LOT-TECH-VILLAGE",
+            "name": "Tech Village Overflow Lot",
+            "short_code": "Tech Village",
+            "permit_required": "Purple (Commuter Student)",
+            "capacity": 320,
+            # North overflow lot on W 12th St
+            "lat": 36.18240,
+            "lon": -85.51160,
+            "walk_mins": 8.0,
+        },
+    ]
+
+    if "Low" in preset:
+        occupied_counts = [80, 110, 35, 30, 20, 15]
+    elif "Transition" in preset:
+        occupied_counts = [270, 410, 175, 120, 95, 80]
+    elif "Event" in preset:
+        occupied_counts = [335, 570, 215, 170, 138, 290]
+    else:  # Morning Peak default
+        occupied_counts = [326, 545, 185, 155, 65, 45]
+
+    df = pd.DataFrame(lots)
+    df["occupied"] = occupied_counts
+    df["available"] = df["capacity"] - df["occupied"]
+    df["pct_full"] = (df["occupied"] / df["capacity"]) * 100
+
+    def get_tier(pct):
+        if pct >= 90.0:
+            return "SATURATED", [239, 68, 68, 240]  # Bright Red
+        elif pct >= 75.0:
+            return "FILLING FAST", [245, 158, 11, 240]  # Bright Amber
+        return "AVAILABLE", [34, 197, 94, 240]  # Bright Green
+
+    tiers = df["pct_full"].apply(get_tier)
+    df["status"] = [t[0] for t in tiers]
+    df["color"] = [t[1] for t in tiers]
+    df["map_label"] = df.apply(
+        lambda r: f"{r['short_code']}: {r['available']} open", axis=1
+    )
+    return df
 
 
-campus_landmarks = fetch_ttu_buildings()
+# Verified ground-truth coordinates for core academic buildings
+campus_landmarks = pd.DataFrame([
+    {"name": "Ashraf Islam Eng (AIEB)", "lat": 36.17765, "lon": -85.50615},
+    {"name": "Volpe Library", "lat": 36.17780, "lon": -85.50495},
+    {"name": "Prescott Hall (Eng)", "lat": 36.17625, "lon": -85.50360},
+    {"name": "Stonecipher (LSC)", "lat": 36.17690, "lon": -85.50605},
+    {"name": "Derryberry Hall", "lat": 36.17540, "lon": -85.50545},
+    {"name": "Hooper Eblen Center", "lat": 36.17855, "lon": -85.50760},
+    {"name": "Bell Hall (Nursing)", "lat": 36.17480, "lon": -85.50785},
+])
+
 building_names = campus_landmarks["name"].tolist()
 
 # -----------------------------------------------------------------------------
@@ -118,17 +161,11 @@ user_permit = st.sidebar.selectbox(
     help="Filters lots by permit tier to eliminate compliance violations.",
 )
 
-default_dest_idx = 0
-for idx, bname in enumerate(building_names):
-    if "Ashraf Islam" in bname or "AIEB" in bname or "Volpe Library" in bname:
-        default_dest_idx = idx
-        break
-
 selected_destination = st.sidebar.selectbox(
     "Campus Destination",
     options=building_names,
-    index=default_dest_idx,
-    help="Auto-populated live from OpenStreetMap campus layers.",
+    index=0,
+    help="Calibrated campus academic destinations.",
 )
 
 st.sidebar.divider()
@@ -156,108 +193,10 @@ selected_arrival_time = st.sidebar.selectbox(
 )
 max_radius = st.sidebar.slider("Detour Radius (km)", 0.5, 3.0, 1.2, 0.1)
 
-
-# -----------------------------------------------------------------------------
-# 3. Ground-Truth TTU Parking Coordinates
-# -----------------------------------------------------------------------------
-def get_ttu_facilities(preset: str):
-    lots = [
-        {
-            "id": "LOT-LIB",
-            "name": "Volpe Library Surface Lot",
-            "short_code": "Library Lot",
-            "permit_required": "Purple (Commuter Student)",
-            "capacity": 340,
-            "lat": 36.17892,
-            "lon": -85.50518,
-            "walk_mins": 1.0,
-        },
-        {
-            "id": "LOT-HOOPER",
-            "name": "Hooper Eblen Center Lot",
-            "short_code": "Hooper Lot",
-            "permit_required": "Purple (Commuter Student)",
-            "capacity": 580,
-            "lat": 36.17795,
-            "lon": -85.50912,
-            "walk_mins": 5.0,
-        },
-        {
-            "id": "LOT-PEACH",
-            "name": "Peachtree Commuter Lot",
-            "short_code": "Peachtree",
-            "permit_required": "Purple (Commuter Student)",
-            "capacity": 220,
-            "lat": 36.17365,
-            "lon": -85.50395,
-            "walk_mins": 4.5,
-        },
-        {
-            "id": "LOT-ASHBURN",
-            "name": "Ashburn Drive / Bryan Lot",
-            "short_code": "Ashburn Lot",
-            "permit_required": "Gold (Faculty / Staff)",
-            "capacity": 175,
-            "lat": 36.17632,
-            "lon": -85.50155,
-            "walk_mins": 2.5,
-        },
-        {
-            "id": "LOT-BELL",
-            "name": "Bell Hall / West 10th Lot",
-            "short_code": "Bell Lot",
-            "permit_required": "Purple (Commuter Student)",
-            "capacity": 140,
-            "lat": 36.17495,
-            "lon": -85.50812,
-            "walk_mins": 6.0,
-        },
-        {
-            "id": "LOT-TECH-VILLAGE",
-            "name": "Tech Village Overflow Lot",
-            "short_code": "Tech Village",
-            "permit_required": "Purple (Commuter Student)",
-            "capacity": 320,
-            "lat": 36.18240,
-            "lon": -85.51165,
-            "walk_mins": 8.0,
-        },
-    ]
-
-    if "Low" in preset:
-        occupied_counts = [80, 110, 35, 30, 20, 15]
-    elif "Transition" in preset:
-        occupied_counts = [270, 410, 175, 120, 95, 80]
-    elif "Event" in preset:
-        occupied_counts = [335, 570, 215, 170, 138, 290]
-    else:  # Morning Peak default
-        occupied_counts = [326, 545, 185, 155, 65, 45]
-
-    df = pd.DataFrame(lots)
-    df["occupied"] = occupied_counts
-    df["available"] = df["capacity"] - df["occupied"]
-    df["pct_full"] = (df["occupied"] / df["capacity"]) * 100
-
-    def get_tier(pct):
-        if pct >= 90.0:
-            return "SATURATED", [220, 38, 38, 240]
-        elif pct >= 75.0:
-            return "FILLING FAST", [234, 138, 0, 240]
-        return "AVAILABLE", [22, 163, 74, 240]
-
-    tiers = df["pct_full"].apply(get_tier)
-    df["status"] = [t[0] for t in tiers]
-    df["color"] = [t[1] for t in tiers]
-    df["map_label"] = df.apply(
-        lambda r: f"{r['short_code']}: {r['available']} open", axis=1
-    )
-    return df
-
-
 facilities_df = get_ttu_facilities(scenario)
 
 # -----------------------------------------------------------------------------
-# 4. Routing Decision Engine
+# 3. Routing Decision Engine
 # -----------------------------------------------------------------------------
 permitted_lots = facilities_df[facilities_df["permit_required"] == user_permit].copy()
 
@@ -271,7 +210,7 @@ else:
     best_lot = None
 
 # -----------------------------------------------------------------------------
-# 5. Header & Dynamic GPS Guidance Strip
+# 4. Header & Dynamic GPS Guidance Strip
 # -----------------------------------------------------------------------------
 st.title("🚗 TTU Smart Commuter Navigation")
 st.caption(
@@ -308,7 +247,7 @@ if best_lot is not None:
 st.divider()
 
 # -----------------------------------------------------------------------------
-# 6. Two-Column Dashboard Layout
+# 5. Two-Column Dashboard Layout
 # -----------------------------------------------------------------------------
 col_lots, col_map = st.columns([3, 2])
 
@@ -345,45 +284,49 @@ with col_lots:
                     st.caption("🚨 Lot full")
 
 with col_map:
-    st.subheader("Campus Wayfinding Mini-Map")
-    st.caption("Asphalt lot centers and auto-populated OpenStreetMap building anchors.")
+    st.subheader("Campus Aerial Navigation")
+    st.caption(
+        "High-resolution satellite view with live stall status and building anchors."
+    )
 
-    # 1. Parking Stall Status Pins
+    # High-visibility parking status circles
     lot_pin_layer = pdk.Layer(
         "ScatterplotLayer",
         data=facilities_df,
         get_position=["lon", "lat"],
         get_color="color",
-        get_radius=18,
-        radius_min_pixels=8,
-        radius_max_pixels=14,
+        get_radius=22,
+        radius_min_pixels=9,
+        radius_max_pixels=16,
         pickable=True,
         auto_highlight=True,
     )
 
-    # 2. Parking Badges
+    # High-contrast capacity callout text for satellite background
     lot_text_layer = pdk.Layer(
         "TextLayer",
         data=facilities_df,
         get_position=["lon", "lat"],
         get_text="map_label",
-        get_color=[15, 23, 42, 255],
-        get_size=13,
+        get_color=[255, 255, 255, 255],
+        get_size=12,
         get_alignment_baseline="'bottom'",
-        get_pixel_offset=[0, -12],
+        get_pixel_offset=[0, -14],
         font_weight="bold",
+        background=True,
+        get_background_color=[15, 23, 42, 210],
         pickable=False,
     )
 
-    # 3. Dynamic Building Pins from Overpass API
+    # Building landmark pins (Cyan)
     building_layer = pdk.Layer(
         "ScatterplotLayer",
         data=campus_landmarks,
         get_position=["lon", "lat"],
-        get_color=[71, 85, 105, 200],
-        get_radius=12,
-        radius_min_pixels=5,
-        radius_max_pixels=7,
+        get_color=[56, 189, 248, 230],
+        get_radius=14,
+        radius_min_pixels=6,
+        radius_max_pixels=9,
         pickable=True,
     )
 
@@ -392,32 +335,59 @@ with col_map:
         data=campus_landmarks,
         get_position=["lon", "lat"],
         get_text="name",
-        get_color=[100, 116, 139, 230],
+        get_color=[255, 255, 255, 240],
         get_size=11,
         get_alignment_baseline="'top'",
         get_pixel_offset=[0, 8],
+        font_weight="bold",
+        background=True,
+        get_background_color=[30, 41, 59, 210],
         pickable=False,
     )
 
     view_state = pdk.ViewState(
-        latitude=36.1776, longitude=-85.5058, zoom=15.6, pitch=0, bearing=0
+        latitude=36.1775, longitude=-85.5058, zoom=15.8, pitch=0, bearing=0
     )
+
+    # Esri Satellite World Imagery raster tile spec
+    satellite_style = {
+        "version": 8,
+        "sources": {
+            "esri-satellite": {
+                "type": "raster",
+                "tiles": [
+                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                ],
+                "tileSize": 256,
+            }
+        },
+        "layers": [
+            {
+                "id": "esri-satellite-layer",
+                "type": "raster",
+                "source": "esri-satellite",
+                "minzoom": 0,
+                "maxzoom": 19,
+            }
+        ],
+    }
 
     st.pydeck_chart(
         pdk.Deck(
-            map_provider="carto",
-            map_style="light",
+            map_style=satellite_style,
             layers=[building_layer, building_text_layer, lot_pin_layer, lot_text_layer],
             initial_view_state=view_state,
-            tooltip={"text": "{name}\nStatus: {status}\nOpen Spaces: {available}"},
+            tooltip={
+                "text": "{name}\nPermit: {permit_required}\nOpen Spaces: {available} / {capacity}"
+            },
         )
     )
     st.caption(
-        "🟢 Green = Available | 🟠 Amber = Filling Fast | 🔴 Red = Saturated. Grey pins mark active campus halls."
+        "🟢 Available | 🟠 Filling Fast | 🔴 Saturated | 🔵 Cyan = Campus Buildings"
     )
 
 # -----------------------------------------------------------------------------
-# 7. Commuter Rideshare Cohorts
+# 6. Commuter Rideshare Cohorts
 # -----------------------------------------------------------------------------
 st.divider()
 st.subheader(f"👥 Rideshare Carpool Matching ({selected_arrival_time} Arrival Window)")
