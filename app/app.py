@@ -1580,13 +1580,18 @@ def render_recommendation():
 def render_map(dataframe, target_lot_id=None):
     map_df = dataframe.copy()
 
+    # Highlight one route target without treating the RGBA list as a 2D array.
     if target_lot_id is not None:
-        target_mask = map_df["id"] == target_lot_id
-        map_df.loc[target_mask, "color"] = [[169, 110, 255, 255]]
-        map_df.loc[target_mask, "map_label"] = map_df.loc[target_mask].apply(
-            lambda row: f"ROUTE → {row['short_code']} · {row['available']} open",
-            axis=1,
-        )
+        target_indexes = map_df.index[map_df["id"] == target_lot_id]
+
+        if len(target_indexes) > 0:
+            target_index = target_indexes[0]
+
+            map_df.at[target_index, "color"] = [169, 110, 255, 255]
+            map_df.at[target_index, "map_label"] = (
+                f"ROUTE → {map_df.at[target_index, 'short_code']} · "
+                f"{map_df.at[target_index, 'available']} open"
+            )
 
     if st.session_state.app_theme == "Dark":
         tile_url = "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
