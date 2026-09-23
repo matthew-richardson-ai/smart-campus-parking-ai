@@ -189,6 +189,17 @@ ZONE_COORDS = {
 }
 
 
+# Simulated route origins and trip lengths.
+# These values drive the demo only; they are not live traffic estimates.
+ROUTE_ORIGINS = {
+    "Downtown Cookeville": 10,
+    "North Cookeville": 16,
+    "Algood": 20,
+    "Sparta": 30,
+    "Monterey": 36,
+}
+
+
 # Campus destinations
 CAMPUS_LANDMARKS = pd.DataFrame(
     [
@@ -1011,6 +1022,159 @@ st.markdown(
             margin-top: .14rem;
         }}
 
+        /* Smart Route trip monitor */
+        .ep-trip-card {{
+            border: 1px solid var(--ep-border);
+            border-radius: 18px;
+            background:
+                linear-gradient(145deg, rgba(77,156,255,.10), transparent 58%),
+                var(--ep-panel);
+            padding: .95rem 1rem;
+            margin-bottom: .7rem;
+        }}
+
+        .ep-trip-head {{
+            display: flex;
+            justify-content: space-between;
+            gap: .8rem;
+            align-items: flex-start;
+        }}
+
+        .ep-trip-label {{
+            color: var(--ep-blue);
+            font-size: .64rem;
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }}
+
+        .ep-trip-name {{
+            color: var(--ep-text);
+            font-size: 1rem;
+            font-weight: 900;
+            margin-top: .25rem;
+        }}
+
+        .ep-trip-status {{
+            border: 1px solid var(--ep-border);
+            border-radius: 999px;
+            background: var(--ep-panel-2);
+            color: var(--ep-text);
+            padding: .28rem .5rem;
+            font-size: .62rem;
+            font-weight: 850;
+            white-space: nowrap;
+        }}
+
+        .ep-route-progress {{
+            height: 10px;
+            border-radius: 999px;
+            background: var(--ep-track);
+            overflow: hidden;
+            margin-top: .8rem;
+        }}
+
+        .ep-route-progress > span {{
+            display: block;
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, var(--ep-purple-2), var(--ep-blue));
+        }}
+
+        .ep-trip-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0,1fr));
+            gap: .45rem;
+            margin-top: .72rem;
+        }}
+
+        .ep-trip-stat {{
+            border: 1px solid var(--ep-border);
+            border-radius: 10px;
+            background: var(--ep-panel-2);
+            padding: .5rem;
+        }}
+
+        .ep-trip-stat-label {{
+            color: var(--ep-muted);
+            font-size: .56rem;
+            font-weight: 700;
+        }}
+
+        .ep-trip-stat-value {{
+            color: var(--ep-text);
+            font-size: .76rem;
+            font-weight: 850;
+            margin-top: .15rem;
+        }}
+
+        .ep-phone {{
+            border: 1px solid rgba(169,110,255,.45);
+            border-radius: 22px;
+            background:
+                radial-gradient(circle at 90% 6%, rgba(169,110,255,.20), transparent 32%),
+                #091423;
+            color: #F7FAFE;
+            padding: .82rem;
+            box-shadow: 0 14px 32px rgba(0,0,0,.24);
+        }}
+
+        .ep-phone-top {{
+            display: flex;
+            justify-content: space-between;
+            gap: .7rem;
+            color: #9CADC3;
+            font-size: .59rem;
+            margin-bottom: .75rem;
+        }}
+
+        .ep-phone-app {{
+            color: #F7C945;
+            font-size: .66rem;
+            font-weight: 900;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+        }}
+
+        .ep-phone-title {{
+            color: #FFFFFF;
+            font-size: 1rem;
+            font-weight: 900;
+            margin-top: .24rem;
+        }}
+
+        .ep-phone-copy {{
+            color: #B5C0D0;
+            font-size: .72rem;
+            line-height: 1.45;
+            margin-top: .4rem;
+        }}
+
+        .ep-phone-route {{
+            border-top: 1px solid rgba(255,255,255,.10);
+            margin-top: .7rem;
+            padding-top: .65rem;
+            color: #FFFFFF;
+            font-size: .73rem;
+            font-weight: 780;
+        }}
+
+        .ep-monitoring {{
+            border: 1px dashed var(--ep-border);
+            border-radius: 16px;
+            background: var(--ep-panel-2);
+            padding: .8rem .9rem;
+            color: var(--ep-muted);
+            font-size: .75rem;
+            line-height: 1.5;
+        }}
+
+        @media (max-width: 700px) {{
+            .ep-trip-grid {{
+                grid-template-columns: repeat(2, minmax(0,1fr));
+            }}
+        }}
+
         /* Native controls */
         section[data-testid="stSidebar"] [data-baseweb="select"] > div,
         section[data-testid="stSidebar"] [data-baseweb="base-input"],
@@ -1413,7 +1577,17 @@ def render_recommendation():
     )
 
 
-def render_map(dataframe):
+def render_map(dataframe, target_lot_id=None):
+    map_df = dataframe.copy()
+
+    if target_lot_id is not None:
+        target_mask = map_df["id"] == target_lot_id
+        map_df.loc[target_mask, "color"] = [[169, 110, 255, 255]]
+        map_df.loc[target_mask, "map_label"] = map_df.loc[target_mask].apply(
+            lambda row: f"ROUTE → {row['short_code']} · {row['available']} open",
+            axis=1,
+        )
+
     if st.session_state.app_theme == "Dark":
         tile_url = "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
         label_color = [245, 248, 252, 255]
@@ -1434,10 +1608,10 @@ def render_map(dataframe):
 
     lots = pdk.Layer(
         "ScatterplotLayer",
-        data=dataframe,
+        data=map_df,
         get_position=["lon", "lat"],
         get_color="color",
-        get_radius=24,
+        get_radius=22,
         radius_min_pixels=9,
         radius_max_pixels=17,
         pickable=True,
@@ -1446,7 +1620,7 @@ def render_map(dataframe):
 
     labels = pdk.Layer(
         "TextLayer",
-        data=dataframe,
+        data=map_df,
         get_position=["lon", "lat"],
         get_text="map_label",
         get_color=label_color,
@@ -1507,6 +1681,224 @@ def render_traceability(feature_name, epic_label, show_all=False):
 
     if count:
         with st.expander("View user stories", expanded=False):
+            for story in stories:
+                render_html(
+                    f"""
+                    <div class="ep-story">
+                        <div class="ep-story-id">
+                            {story["id"]} · Board #{story["board_number"]} ·
+                            Issue #{story["github_issue"]}
+                        </div>
+                        <div class="ep-story-text">{story["story"]}</div>
+                    </div>
+                    """
+                )
+
+
+# Smart Route simulation helpers
+def get_route_pressure(preset):
+    if "Morning Peak" in preset:
+        return {
+            "live": [0.0, 0.8, 1.8, 3.5, 5.5],
+            "projected": [1.5, 3.0, 6.0, 9.0, 11.0],
+        }
+
+    if "Transition" in preset:
+        return {
+            "live": [0.0, 0.4, 0.8, 1.5, 2.0],
+            "projected": [0.5, 1.2, 2.0, 3.0, 3.5],
+        }
+
+    if "Event" in preset:
+        return {
+            "live": [0.0, 1.0, 2.2, 4.0, 6.0],
+            "projected": [1.5, 3.0, 5.0, 7.0, 9.0],
+        }
+
+    return {
+        "live": [0.0, -0.5, -1.0, -1.8, -2.5],
+        "projected": [-0.5, -1.0, -1.8, -2.5, -3.0],
+    }
+
+
+def route_lot_snapshot(lot_row, preset, step):
+    pressure = get_route_pressure(preset)
+    step = max(0, min(int(step), 4))
+
+    live_pct = max(
+        0.0,
+        min(100.0, float(lot_row["pct_full"]) + pressure["live"][step]),
+    )
+    projected_pct = max(
+        0.0,
+        min(100.0, float(lot_row["pct_full"]) + pressure["projected"][step]),
+    )
+
+    live_open = max(
+        0,
+        int(round(float(lot_row["capacity"]) * (1 - (live_pct / 100)))),
+    )
+    projected_open = max(
+        0,
+        int(round(float(lot_row["capacity"]) * (1 - (projected_pct / 100)))),
+    )
+
+    return {
+        "live_pct": live_pct,
+        "projected_pct": projected_pct,
+        "live_open": live_open,
+        "projected_open": projected_open,
+    }
+
+
+def choose_route_backup(current_lot_id, permit, preset, step):
+    if permit not in {"Purple", "Gold"}:
+        return None
+
+    candidates = facilities_df[
+        (facilities_df["permit_required"] == permit)
+        & (facilities_df["id"] != current_lot_id)
+    ].copy()
+
+    if candidates.empty:
+        return None
+
+    ranked = []
+
+    for _, candidate in candidates.iterrows():
+        snapshot = route_lot_snapshot(candidate, preset, step)
+        ranked.append(
+            (
+                snapshot["projected_pct"],
+                float(candidate["walk_mins"]),
+                -snapshot["projected_open"],
+                candidate,
+                snapshot,
+            )
+        )
+
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+    best = ranked[0]
+
+    return {
+        "row": best[3],
+        "snapshot": best[4],
+    }
+
+
+def render_route_monitor(trip, lot_row, snapshot):
+    progress_pct = int(trip["step"] * 25)
+    remaining_eta = max(
+        0,
+        int(round(trip["eta_total"] * (1 - (progress_pct / 100)))),
+    )
+
+    status = "ARRIVED" if trip["step"] >= 4 else "EN ROUTE"
+
+    render_html(
+        f"""
+        <div class="ep-trip-card">
+            <div class="ep-trip-head">
+                <div>
+                    <div class="ep-trip-label">Simulated navigation</div>
+                    <div class="ep-trip-name">
+                        {trip["origin"]} → {trip["destination"]}
+                    </div>
+                </div>
+                <div class="ep-trip-status">{status}</div>
+            </div>
+
+            <div class="ep-route-progress">
+                <span style="width:{progress_pct}%;"></span>
+            </div>
+
+            <div class="ep-trip-grid">
+                <div class="ep-trip-stat">
+                    <div class="ep-trip-stat-label">Trip progress</div>
+                    <div class="ep-trip-stat-value">{progress_pct}%</div>
+                </div>
+                <div class="ep-trip-stat">
+                    <div class="ep-trip-stat-label">ETA</div>
+                    <div class="ep-trip-stat-value">{remaining_eta} min</div>
+                </div>
+                <div class="ep-trip-stat">
+                    <div class="ep-trip-stat-label">Current route</div>
+                    <div class="ep-trip-stat-value">{lot_row["short_code"]}</div>
+                </div>
+                <div class="ep-trip-stat">
+                    <div class="ep-trip-stat-label">Projected at arrival</div>
+                    <div class="ep-trip-stat-value">
+                        {snapshot["projected_pct"]:.0f}% ·
+                        {snapshot["projected_open"]} open
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+    )
+
+
+def render_phone_alert(lot_row, snapshot, backup):
+    backup_text = "No permitted backup is currently available."
+
+    if backup is not None:
+        backup_text = (
+            f"Suggested reroute: {backup['row']['short_code']} · "
+            f"{backup['snapshot']['projected_open']} projected spaces"
+        )
+
+    render_html(
+        f"""
+        <div class="ep-phone">
+            <div class="ep-phone-top">
+                <span>EaglePark AI</span>
+                <span>EN ROUTE</span>
+            </div>
+            <div class="ep-phone-app">Parking alert</div>
+            <div class="ep-phone-title">
+                {lot_row["short_code"]} may fill before arrival
+            </div>
+            <div class="ep-phone-copy">
+                Latest route monitoring projects
+                <strong>{snapshot["projected_pct"]:.0f}% occupancy</strong>
+                when you arrive.
+            </div>
+            <div class="ep-phone-route">{backup_text}</div>
+        </div>
+        """
+    )
+
+
+def render_smart_route_traceability():
+    linked_ids = {
+        "US-02",
+        "US-03",
+        "US-06",
+        "US-07",
+        "US-08",
+        "US-09",
+        "US-10",
+    }
+
+    stories = [
+        story
+        for story in USER_STORIES
+        if story.get("id") in linked_ids
+    ]
+
+    render_html(
+        f"""
+        <div class="ep-trace-banner">
+            <div class="ep-trace-title">▣ Project Traceability</div>
+            <div class="ep-trace-copy">
+                Smart Route + predictive alerts · {len(stories)} linked user stories.
+            </div>
+        </div>
+        """
+    )
+
+    if stories:
+        with st.expander("View linked user stories", expanded=False):
             for story in stories:
                 render_html(
                     f"""
@@ -1814,44 +2206,315 @@ elif active_page == "Predictive Parking":
 elif active_page == "Smart Route":
     render_hero(
         "Smart Route",
-        "Permit-aware parking guidance that reacts to campus saturation "
-        "and launches a practical route to the selected lot.",
+        "Plan a permit-aware trip, monitor parking conditions while driving, "
+        "and simulate an en-route push alert when the selected lot becomes risky.",
     )
 
-    render_traceability("Smart Route", "Epic 2")
+    render_smart_route_traceability()
 
-    left, right = st.columns([0.78, 1.35], gap="large")
+    setup_col, map_col = st.columns([0.82, 1.35], gap="large")
 
-    with left:
+    with setup_col:
         render_html('<div class="ep-section-title">Route Setup</div>')
 
-        destination = st.selectbox(
+        route_origin = st.selectbox(
+            "Starting area",
+            list(ROUTE_ORIGINS.keys()),
+            index=2,
+            help="Trip lengths are simulated for the prototype.",
+        )
+
+        route_destination = st.selectbox(
             "Campus destination",
             CAMPUS_LANDMARKS["name"].tolist(),
+            key="smart_route_destination",
         )
+
+        parking_mode = st.radio(
+            "Parking choice",
+            ["EaglePark recommendation", "Choose preferred lot"],
+            horizontal=True,
+        )
+
+        permitted_route_lots = facilities_df[
+            facilities_df["permit_required"] == user_permit
+        ].copy()
+
+        if parking_mode == "EaglePark recommendation":
+            route_target = recommended_lot
+        else:
+            if permitted_route_lots.empty:
+                route_target = None
+                st.warning(
+                    "The active profile does not have a Purple or Gold parking permit."
+                )
+            else:
+                route_names = permitted_route_lots["name"].tolist()
+
+                preferred_index = 0
+                if "Peachtree Commuter Zone" in route_names:
+                    preferred_index = route_names.index("Peachtree Commuter Zone")
+
+                preferred_name = st.selectbox(
+                    "Preferred parking lot",
+                    route_names,
+                    index=preferred_index,
+                )
+
+                route_target = permitted_route_lots[
+                    permitted_route_lots["name"] == preferred_name
+                ].iloc[0]
 
         ev_priority = st.checkbox(
             "Prioritize EV charging",
             value=False,
-            help="Prototype preference only; EV stall data is simulated.",
+            help="EV charging availability is simulated in this prototype.",
         )
 
         if ev_priority:
             st.caption(
-                "EV charging availability is represented as a future data source in this prototype."
+                "EV preference is recorded for the route, but live charger data "
+                "is not connected in this simulation."
             )
 
-        render_html('<div class="ep-section-title">Recommendation</div>')
-        render_recommendation()
+        if route_target is not None:
+            snapshot = route_lot_snapshot(route_target, traffic_preset, 0)
 
-    with right:
-        render_html('<div class="ep-section-title">Campus Map</div>')
-        render_map(facilities_df)
+            render_html(
+                f"""
+                <div class="ep-rec">
+                    <div class="ep-rec-label">Route target</div>
+                    <div class="ep-rec-name">{route_target["name"]}</div>
+                    <div class="ep-rec-grid">
+                        <div class="ep-rec-stat">
+                            <div class="ep-rec-stat-label">Current occupancy</div>
+                            <div class="ep-rec-stat-value">{route_target["pct_full"]:.0f}%</div>
+                        </div>
+                        <div class="ep-rec-stat">
+                            <div class="ep-rec-stat-label">Projected at start</div>
+                            <div class="ep-rec-stat-value">{snapshot["projected_pct"]:.0f}%</div>
+                        </div>
+                        <div class="ep-rec-stat">
+                            <div class="ep-rec-stat-label">Permit</div>
+                            <div class="ep-rec-stat-value">{route_target["permit_required"]}</div>
+                        </div>
+                        <div class="ep-rec-stat">
+                            <div class="ep-rec-stat-label">Simulated trip</div>
+                            <div class="ep-rec-stat-value">{ROUTE_ORIGINS[route_origin]} min</div>
+                        </div>
+                    </div>
+                </div>
+                """
+            )
+
+            if st.button(
+                "Start simulated trip",
+                key="start_route_trip",
+                use_container_width=True,
+            ):
+                st.session_state["route_trip"] = {
+                    "active": True,
+                    "origin": route_origin,
+                    "destination": route_destination,
+                    "lot_id": route_target["id"],
+                    "original_lot_id": route_target["id"],
+                    "eta_total": ROUTE_ORIGINS[route_origin],
+                    "step": 0,
+                    "alert_sent": False,
+                    "alert_resolved": False,
+                    "decision": None,
+                    "reroute_count": 0,
+                }
+                st.rerun()
+
+            if (
+                "Morning Peak" in traffic_preset
+                and route_target["name"] == "Peachtree Commuter Zone"
+            ):
+                st.caption(
+                    "Demo shortcut: this combination will trigger an en-route "
+                    "capacity alert after the trip advances."
+                )
+
+    trip = st.session_state.get("route_trip")
+
+    map_target_id = None
+    if trip and trip.get("active"):
+        map_target_id = trip["lot_id"]
+    elif route_target is not None:
+        map_target_id = route_target["id"]
+
+    with map_col:
+        render_html('<div class="ep-section-title">Campus Route Target</div>')
+        render_map(facilities_df, target_lot_id=map_target_id)
+
+    if trip and trip.get("active"):
+        active_lot = facilities_df[
+            facilities_df["id"] == trip["lot_id"]
+        ].iloc[0]
+
+        snapshot = route_lot_snapshot(
+            active_lot,
+            traffic_preset,
+            trip["step"],
+        )
+
+        backup = choose_route_backup(
+            active_lot["id"],
+            user_permit,
+            traffic_preset,
+            trip["step"],
+        )
+
+        risk_detected = snapshot["projected_pct"] >= 90.0
+
+        if (
+            risk_detected
+            and not trip["alert_sent"]
+            and trip["step"] < 4
+        ):
+            trip["alert_sent"] = True
+            trip["alert_resolved"] = False
+            st.session_state["route_trip"] = trip
+
+            st.toast(
+                f"{active_lot['short_code']} may fill before arrival. "
+                "A backup route is available.",
+                icon="⚠️",
+            )
+
+        render_html('<div class="ep-section-title">Live Trip Simulation</div>')
+
+        monitor_col, phone_col = st.columns([1.3, 0.7], gap="large")
+
+        with monitor_col:
+            render_route_monitor(
+                trip,
+                active_lot,
+                snapshot,
+            )
+
+            if trip["step"] < 4:
+                b1, b2 = st.columns([1, 1])
+
+                with b1:
+                    if st.button(
+                        "Advance trip",
+                        key="advance_route_trip",
+                        use_container_width=True,
+                    ):
+                        trip["step"] = min(4, trip["step"] + 1)
+                        st.session_state["route_trip"] = trip
+                        st.rerun()
+
+                with b2:
+                    if st.button(
+                        "Reset trip",
+                        key="reset_route_trip",
+                        use_container_width=True,
+                    ):
+                        st.session_state.pop("route_trip", None)
+                        st.rerun()
+            else:
+                st.success(
+                    f"Simulated arrival complete at {active_lot['name']}."
+                )
+
+                if st.button(
+                    "Start another trip",
+                    key="restart_route_trip",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop("route_trip", None)
+                    st.rerun()
+
+        with phone_col:
+            if risk_detected and not trip["alert_resolved"]:
+                render_phone_alert(
+                    active_lot,
+                    snapshot,
+                    backup,
+                )
+
+                if backup is not None:
+                    if st.button(
+                        f"Accept reroute to {backup['row']['short_code']}",
+                        key="accept_route_reroute",
+                        use_container_width=True,
+                    ):
+                        trip["lot_id"] = backup["row"]["id"]
+                        trip["alert_resolved"] = True
+                        trip["decision"] = "rerouted"
+                        trip["reroute_count"] += 1
+                        st.session_state["route_trip"] = trip
+
+                        st.toast(
+                            f"Route updated to {backup['row']['short_code']}.",
+                            icon="🧭",
+                        )
+                        st.rerun()
+
+                if st.button(
+                    "Keep current route",
+                    key="keep_current_route",
+                    use_container_width=True,
+                ):
+                    trip["alert_resolved"] = True
+                    trip["decision"] = "kept current route"
+                    st.session_state["route_trip"] = trip
+                    st.rerun()
+
+            elif trip.get("decision") == "rerouted":
+                render_html(
+                    """
+                    <div class="ep-phone">
+                        <div class="ep-phone-top">
+                            <span>EaglePark AI</span>
+                            <span>ROUTE UPDATED</span>
+                        </div>
+                        <div class="ep-phone-app">Reroute accepted</div>
+                        <div class="ep-phone-title">New parking route active</div>
+                        <div class="ep-phone-copy">
+                            EaglePark will keep monitoring the updated parking target
+                            as the simulated trip continues.
+                        </div>
+                    </div>
+                    """
+                )
+            elif trip.get("decision") == "kept current route":
+                render_html(
+                    """
+                    <div class="ep-phone">
+                        <div class="ep-phone-top">
+                            <span>EaglePark AI</span>
+                            <span>MONITORING</span>
+                        </div>
+                        <div class="ep-phone-app">Alert dismissed</div>
+                        <div class="ep-phone-title">Current route retained</div>
+                        <div class="ep-phone-copy">
+                            The driver kept the original route. EaglePark continues
+                            to display the latest parking projection.
+                        </div>
+                    </div>
+                    """
+                )
+            else:
+                render_html(
+                    """
+                    <div class="ep-monitoring">
+                        <strong>Route monitoring active.</strong><br>
+                        EaglePark is watching the selected lot's projected occupancy.
+                        A simulated push alert will appear here if the route becomes risky.
+                    </div>
+                    """
+                )
 
     render_html('<div class="ep-section-title">Alternative Lots</div>')
 
     c1, c2 = st.columns(2, gap="medium")
-    rows = facilities_df.sort_values(["pct_full", "walk_mins"]).reset_index(drop=True)
+    rows = facilities_df.sort_values(
+        ["pct_full", "walk_mins"]
+    ).reset_index(drop=True)
 
     for i, row in rows.iterrows():
         target = c1 if i % 2 == 0 else c2
