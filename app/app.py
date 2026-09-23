@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import pydeck as pdk
 import streamlit as st
 
 
@@ -215,6 +214,7 @@ CAMPUS_LANDMARKS = pd.DataFrame(
 
 
 # Simulated parking data
+@st.cache_data(show_spinner=False)
 def get_ttu_facilities(preset):
     lots = [
         {
@@ -317,6 +317,7 @@ def get_ttu_facilities(preset):
 
 
 # Simple 20-minute forecast used by the prototype
+@st.cache_data(show_spinner=False)
 def add_forecast(facilities_df, preset):
     df = facilities_df.copy()
 
@@ -389,8 +390,8 @@ if st.session_state.app_theme == "Dark":
         "border": "#253A54",
         "text": "#F7FAFE",
         "muted": "#9CADC3",
-        "purple": "#C4A7FF",
-        "purple_2": "#8B5CF6",
+        "purple": "#D8C9FF",
+        "purple_2": "#A78BFA",
         "gold": "#F7C945",
         "green": "#22C989",
         "amber": "#F1B632",
@@ -411,8 +412,8 @@ else:
         "border": "#D9DFEA",
         "text": "#172033",
         "muted": "#63748A",
-        "purple": "#7A6BE8",
-        "purple_2": "#6557C9",
+        "purple": "#8B7CF6",
+        "purple_2": "#7567DB",
         "gold": "#8A6A13",
         "green": "#157A50",
         "amber": "#996000",
@@ -422,6 +423,21 @@ else:
         "track": "#E2E9F1",
         "shadow": "0 14px 36px rgba(18,35,58,.09)",
     }
+
+
+# Load Roboto for a cleaner product-style interface.
+# display=swap keeps text visible while the font downloads.
+st.markdown(
+    """
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap"
+        rel="stylesheet"
+    >
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # Global UI styling
@@ -457,8 +473,7 @@ st.markdown(
         }}
 
         html, body, [class*="css"] {{
-            font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
-                         "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: "Roboto", "Segoe UI", Arial, sans-serif;
         }}
 
         [data-testid="stHeader"] {{
@@ -1262,7 +1277,7 @@ st.markdown(
 
         /* Map */
         .stDeckGlJsonChart {{
-            min-height: 480px;
+            min-height: 430px;
             border-radius: 18px;
             overflow: hidden;
             border: 1px solid var(--ep-border);
@@ -1289,7 +1304,7 @@ st.markdown(
             }}
 
             .stDeckGlJsonChart {{
-                min-height: 390px;
+                min-height: 360px;
             }}
         }}
 
@@ -1323,7 +1338,7 @@ st.markdown(
             }}
 
             .stDeckGlJsonChart {{
-                min-height: 330px;
+                min-height: 310px;
             }}
         }}
     </style>
@@ -1580,6 +1595,9 @@ def render_recommendation():
 
 
 def render_map(dataframe, target_lot_id=None):
+    # PyDeck is imported only when a page actually opens a map.
+    import pydeck as pdk
+
     map_df = dataframe.copy()
 
     # Highlight one route target without treating the RGBA list as a 2D array.
@@ -2064,8 +2082,43 @@ if active_page == "Overview":
             render_lot_row(row)
 
     with right:
+        render_html('<div class="ep-section-title">Best Option Right Now</div>')
+        render_recommendation()
+
         render_html('<div class="ep-section-title">Campus Map</div>')
-        render_map(facilities_df)
+        st.caption(
+            "The interactive map is loaded only when requested to keep the "
+            "Overview page fast."
+        )
+
+        if st.button(
+            "Load interactive campus map",
+            key="overview_load_map",
+            use_container_width=True,
+        ):
+            st.session_state["overview_map_loaded"] = True
+
+        if st.session_state.get("overview_map_loaded", False):
+            render_map(facilities_df)
+        else:
+            busiest = facilities_df.sort_values(
+                "pct_full",
+                ascending=False,
+            ).head(3)
+
+            render_html(
+                """
+                <div class="ep-panel">
+                    <div class="ep-section-sub">
+                        Live map deferred for faster startup.
+                        Highest-pressure lots are shown below.
+                    </div>
+                </div>
+                """
+            )
+
+            for _, row in busiest.iterrows():
+                render_lot_row(row)
 
     render_html('<div class="ep-section-title">Quick Actions</div>')
 
@@ -2147,7 +2200,7 @@ if active_page == "Overview":
             args=("Operations",),
         )
 
-    render_traceability("Dashboard", "Full application", show_all=True)
+    render_traceability("Dashboard", "Overview")
 
 
 # Predictive Parking
