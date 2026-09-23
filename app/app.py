@@ -2,32 +2,36 @@
 """
 EaglePark AI - CSC 4610 prototype.
 
-Desktop-first Streamlit interface for parking, routing, rideshare,
-and evaluation user stories. The layout automatically stacks on
-smaller screens.
+Desktop-first Streamlit interface for parking, routing,
+rideshare, and evaluation user stories.
 """
 
 import os
 import sys
+from pathlib import Path
 
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
 
-# Project imports
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+# Project paths
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ASSET_DIR = PROJECT_ROOT / "assets"
+LOGO_PATH = ASSET_DIR / "ttu_logo.png"
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 try:
     from user_stories import get_stories_for_feature
 except ImportError:
+
     def get_stories_for_feature(feature_name):
         return []
 
 
-# Page setup
+# Streamlit page settings
 st.set_page_config(
     page_title="EaglePark AI",
     page_icon="🦅",
@@ -42,41 +46,35 @@ INSTITUTIONAL_ACCOUNTS = {
         "name": "Alex Mercer",
         "role": "Enrolled Student",
         "permit": "Purple",
-        "has_permit": True,
     },
     "T00987654": {
         "name": "Jordan Smith",
         "role": "Graduate Assistant",
         "permit": "Purple",
-        "has_permit": True,
     },
     "T00554433": {
         "name": "Dr. Vance",
         "role": "Faculty / Staff",
         "permit": "Gold",
-        "has_permit": True,
     },
     "T00000000": {
         "name": "Visitor / Guest",
         "role": "Unregistered Commuter",
         "permit": "None",
-        "has_permit": False,
     },
 }
 
 
 # Campus buildings used by the route demo
-CAMPUS_LANDMARKS = pd.DataFrame(
-    [
-        {"name": "Ashraf Islam Eng Building (AIEB)", "lat": 36.17765, "lon": -85.50615},
-        {"name": "Volpe Library", "lat": 36.17780, "lon": -85.50495},
-        {"name": "Prescott Hall", "lat": 36.17625, "lon": -85.50360},
-        {"name": "Stonecipher Hall (LSC)", "lat": 36.17690, "lon": -85.50605},
-        {"name": "Derryberry Hall", "lat": 36.17540, "lon": -85.50545},
-        {"name": "Hooper Eblen Center", "lat": 36.17855, "lon": -85.50760},
-        {"name": "Bell Hall", "lat": 36.17480, "lon": -85.50785},
-    ]
-)
+CAMPUS_LANDMARKS = pd.DataFrame([
+    {"name": "Ashraf Islam Eng Building (AIEB)", "lat": 36.17765, "lon": -85.50615},
+    {"name": "Volpe Library", "lat": 36.17780, "lon": -85.50495},
+    {"name": "Prescott Hall", "lat": 36.17625, "lon": -85.50360},
+    {"name": "Stonecipher Hall (LSC)", "lat": 36.17690, "lon": -85.50605},
+    {"name": "Derryberry Hall", "lat": 36.17540, "lon": -85.50545},
+    {"name": "Hooper Eblen Center", "lat": 36.17855, "lon": -85.50760},
+    {"name": "Bell Hall", "lat": 36.17480, "lon": -85.50785},
+])
 
 
 # Simulated TTU parking data
@@ -158,25 +156,26 @@ def get_ttu_facilities(preset):
     df["available"] = df["capacity"] - df["occupied"]
     df["pct_full"] = (df["occupied"] / df["capacity"]) * 100
 
-    def status_from_pct(pct):
+    def get_status(pct):
         if pct >= 90:
             return "SATURATED"
         if pct >= 75:
             return "FILLING FAST"
         return "AVAILABLE"
 
-    def map_color(pct):
+    def get_map_color(pct):
         if pct >= 90:
-            return [244, 96, 96, 235]
+            return [239, 92, 92, 235]
         if pct >= 75:
-            return [244, 180, 64, 235]
-        return [61, 201, 145, 235]
+            return [236, 171, 54, 235]
+        return [47, 190, 132, 235]
 
-    df["status"] = df["pct_full"].apply(status_from_pct)
-    df["color"] = df["pct_full"].apply(map_color)
+    df["status"] = df["pct_full"].apply(get_status)
+    df["color"] = df["pct_full"].apply(get_map_color)
     df["map_label"] = df.apply(
         lambda row: f"{row['short_code']} · {row['available']} open", axis=1
     )
+
     return df
 
 
@@ -184,108 +183,119 @@ def recommend_lot(facilities_df, permit):
     if permit not in {"Purple", "Gold"}:
         return None
 
-    permitted = facilities_df[
-        facilities_df["permit_required"] == permit
-    ].copy()
+    permitted = facilities_df[facilities_df["permit_required"] == permit].copy()
 
     if permitted.empty:
         return None
 
-    open_lots = permitted[permitted["pct_full"] < 90]
-    if not open_lots.empty:
-        return open_lots.sort_values(
-            ["walk_mins", "pct_full"], ascending=[True, True]
+    usable = permitted[permitted["pct_full"] < 90]
+
+    if not usable.empty:
+        return usable.sort_values(
+            ["walk_mins", "pct_full"],
+            ascending=[True, True],
         ).iloc[0]
 
-    return permitted.sort_values("available", ascending=False).iloc[0]
+    return permitted.sort_values(
+        "available",
+        ascending=False,
+    ).iloc[0]
 
 
-# Theme state
+# Theme toggle comes before CSS so the entire page rerenders together.
 if "app_theme" not in st.session_state:
     st.session_state.app_theme = "Dark"
 
 light_mode = st.sidebar.toggle(
     "Light mode",
     value=st.session_state.app_theme == "Light",
-    help="Switch between dark and light presentation themes.",
+    help="Switch the entire EaglePark interface between light and dark mode.",
 )
 st.session_state.app_theme = "Light" if light_mode else "Dark"
 
 
-# Theme colors
+# Every visible color comes from one theme dictionary.
 if st.session_state.app_theme == "Dark":
-    colors = {
-        "bg": "#0B111A",
-        "sidebar": "#0E1622",
-        "panel": "#111B29",
-        "panel_2": "#152235",
-        "soft": "#1B2A3D",
-        "border": "#26384E",
-        "text": "#F5F8FC",
-        "muted": "#A7B4C6",
-        "purple": "#9B82F3",
-        "purple_2": "#7156C8",
-        "gold": "#F1CA4B",
-        "good": "#3DC991",
-        "warn": "#F0B84D",
-        "bad": "#F06363",
-        "track": "#223247",
-        "shadow": "0 18px 44px rgba(0,0,0,.28)",
+    theme = {
+        "scheme": "dark",
+        "bg": "#08111D",
+        "sidebar": "#0C1725",
+        "panel": "#101D2C",
+        "panel_alt": "#142337",
+        "soft": "#1A2B40",
+        "border": "#2B3E55",
+        "text": "#F7FAFE",
+        "muted": "#AAB8CA",
+        "purple": "#AA8BFF",
+        "purple_strong": "#7957D5",
+        "gold": "#F6D34D",
+        "green": "#49D39E",
+        "amber": "#F2BC54",
+        "red": "#FF7474",
+        "input": "#122136",
+        "input_text": "#F7FAFE",
+        "track": "#22344A",
+        "shadow": "0 18px 48px rgba(0,0,0,.30)",
     }
 else:
-    colors = {
+    theme = {
+        "scheme": "light",
         "bg": "#F4F7FB",
         "sidebar": "#FFFFFF",
         "panel": "#FFFFFF",
-        "panel_2": "#F9FBFD",
+        "panel_alt": "#F8FAFD",
         "soft": "#EEF3F8",
-        "border": "#D8E0EA",
+        "border": "#D7E0EA",
         "text": "#172033",
-        "muted": "#617186",
-        "purple": "#5E3AA8",
-        "purple_2": "#4F2984",
-        "gold": "#8D6900",
-        "good": "#167B55",
-        "warn": "#986000",
-        "bad": "#B42318",
-        "track": "#E5EBF2",
-        "shadow": "0 14px 34px rgba(18,35,58,.08)",
+        "muted": "#66768A",
+        "purple": "#6540AF",
+        "purple_strong": "#4F2984",
+        "gold": "#806000",
+        "green": "#14764E",
+        "amber": "#925A00",
+        "red": "#B42318",
+        "input": "#FFFFFF",
+        "input_text": "#172033",
+        "track": "#E4EAF1",
+        "shadow": "0 14px 36px rgba(18,35,58,.09)",
     }
 
 
-# Modern desktop-first styling
+# Apply one complete theme to custom HTML and Streamlit controls.
 st.markdown(
     f"""
     <style>
         :root {{
-            --ep-bg: {colors["bg"]};
-            --ep-sidebar: {colors["sidebar"]};
-            --ep-panel: {colors["panel"]};
-            --ep-panel-2: {colors["panel_2"]};
-            --ep-soft: {colors["soft"]};
-            --ep-border: {colors["border"]};
-            --ep-text: {colors["text"]};
-            --ep-muted: {colors["muted"]};
-            --ep-purple: {colors["purple"]};
-            --ep-purple-2: {colors["purple_2"]};
-            --ep-gold: {colors["gold"]};
-            --ep-good: {colors["good"]};
-            --ep-warn: {colors["warn"]};
-            --ep-bad: {colors["bad"]};
-            --ep-track: {colors["track"]};
-            --ep-shadow: {colors["shadow"]};
+            color-scheme: {theme["scheme"]};
+            --ep-bg: {theme["bg"]};
+            --ep-sidebar: {theme["sidebar"]};
+            --ep-panel: {theme["panel"]};
+            --ep-panel-alt: {theme["panel_alt"]};
+            --ep-soft: {theme["soft"]};
+            --ep-border: {theme["border"]};
+            --ep-text: {theme["text"]};
+            --ep-muted: {theme["muted"]};
+            --ep-purple: {theme["purple"]};
+            --ep-purple-strong: {theme["purple_strong"]};
+            --ep-gold: {theme["gold"]};
+            --ep-green: {theme["green"]};
+            --ep-amber: {theme["amber"]};
+            --ep-red: {theme["red"]};
+            --ep-input: {theme["input"]};
+            --ep-input-text: {theme["input_text"]};
+            --ep-track: {theme["track"]};
+            --ep-shadow: {theme["shadow"]};
+        }}
+
+        html, body, .stApp,
+        [data-testid="stAppViewContainer"] {{
+            background: var(--ep-bg) !important;
+            color: var(--ep-text) !important;
         }}
 
         html, body, [class*="css"] {{
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                          "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        }}
-
-        html, body,
-        [data-testid="stAppViewContainer"],
-        .stApp {{
-            background: var(--ep-bg) !important;
-            color: var(--ep-text) !important;
         }}
 
         [data-testid="stHeader"] {{
@@ -295,7 +305,7 @@ st.markdown(
         [data-testid="stAppViewBlockContainer"] {{
             width: min(100%, 1500px) !important;
             max-width: 1500px !important;
-            padding: 1.4rem 2rem 3rem !important;
+            padding: 1.3rem 2rem 3rem !important;
         }}
 
         section[data-testid="stSidebar"] {{
@@ -316,7 +326,8 @@ st.markdown(
         }}
 
         h1, h2, h3, h4, h5, h6,
-        p, label, .stMarkdown {{
+        p, label, .stMarkdown,
+        [data-testid="stMarkdownContainer"] {{
             color: var(--ep-text);
         }}
 
@@ -325,156 +336,130 @@ st.markdown(
             color: var(--ep-muted) !important;
         }}
 
-        /* Sidebar brand */
-        .ep-sidebar-brand {{
-            display: flex;
-            align-items: center;
-            gap: .75rem;
-            margin: .25rem 0 1.35rem;
-        }}
-
-        .ep-sidebar-mark {{
-            width: 42px;
-            height: 42px;
-            border-radius: 12px;
-            background: linear-gradient(145deg, #5A2A98, #3F1D72);
-            border: 1px solid rgba(255,221,0,.55);
-            color: #FFDD00;
-            display: grid;
-            place-items: center;
-            font-size: .85rem;
-            font-weight: 850;
-            letter-spacing: .04em;
+        /* Sidebar logo stays readable in either theme. */
+        .ep-logo-shell {{
+            border-radius: 16px;
+            border: 1px solid var(--ep-border);
+            background: #FFDD00;
+            overflow: hidden;
+            padding: .35rem;
+            margin: .4rem 0 .7rem;
             box-shadow: var(--ep-shadow);
         }}
 
-        .ep-sidebar-title {{
+        .ep-brand-copy {{
+            margin-bottom: 1.25rem;
+        }}
+
+        .ep-brand-title {{
             color: var(--ep-text);
-            font-size: 1.08rem;
-            font-weight: 800;
-            line-height: 1.1;
+            font-size: 1.15rem;
+            font-weight: 850;
+            line-height: 1.15;
         }}
 
-        .ep-sidebar-sub {{
+        .ep-brand-subtitle {{
             color: var(--ep-muted);
-            font-size: .72rem;
-            margin-top: .18rem;
+            font-size: .75rem;
+            margin-top: .25rem;
         }}
 
-        /* Main header */
+        /* Main page hero */
         .ep-hero {{
-            position: relative;
-            overflow: hidden;
             border: 1px solid var(--ep-border);
             border-radius: 22px;
             background:
-                radial-gradient(circle at 82% 18%, rgba(155,130,243,.22), transparent 28%),
-                linear-gradient(135deg, rgba(94,58,168,.18), transparent 54%),
+                radial-gradient(circle at 88% 8%, rgba(121,87,213,.24), transparent 30%),
+                linear-gradient(135deg, rgba(121,87,213,.14), transparent 58%),
                 var(--ep-panel);
             padding: 1.35rem 1.5rem;
-            margin-bottom: 1.1rem;
+            margin-bottom: 1.15rem;
             box-shadow: var(--ep-shadow);
         }}
 
-        .ep-hero::after {{
-            content: "";
-            position: absolute;
-            right: -72px;
-            bottom: -92px;
-            width: 230px;
-            height: 230px;
-            border-radius: 50%;
-            border: 1px solid rgba(155,130,243,.22);
-        }}
-
-        .ep-hero-grid {{
-            position: relative;
-            z-index: 2;
+        .ep-hero-row {{
             display: flex;
-            align-items: center;
             justify-content: space-between;
-            gap: 1.25rem;
+            align-items: center;
+            gap: 1rem;
         }}
 
-        .ep-hero-kicker {{
+        .ep-kicker {{
             color: var(--ep-purple);
-            font-size: .72rem;
+            font-size: .71rem;
             font-weight: 850;
-            letter-spacing: .11em;
+            letter-spacing: .12em;
             text-transform: uppercase;
-            margin-bottom: .36rem;
+            margin-bottom: .38rem;
         }}
 
-        .ep-hero-title {{
+        .ep-title {{
             color: var(--ep-text);
-            font-size: clamp(1.65rem, 2.4vw, 2.55rem);
+            font-size: clamp(1.75rem, 2.5vw, 2.55rem);
             font-weight: 850;
+            line-height: 1.04;
             letter-spacing: -.035em;
-            line-height: 1.03;
             margin: 0;
         }}
 
-        .ep-hero-sub {{
+        .ep-subtitle {{
             color: var(--ep-muted);
+            max-width: 780px;
             margin-top: .55rem;
             font-size: .92rem;
             line-height: 1.55;
-            max-width: 760px;
         }}
 
-        .ep-live-chip {{
+        .ep-live {{
             flex: 0 0 auto;
             display: inline-flex;
             align-items: center;
             gap: .5rem;
-            border-radius: 999px;
-            padding: .48rem .72rem;
             border: 1px solid var(--ep-border);
+            border-radius: 999px;
             background: var(--ep-soft);
             color: var(--ep-text);
-            font-size: .72rem;
+            padding: .48rem .72rem;
+            font-size: .7rem;
             font-weight: 800;
-            letter-spacing: .04em;
+            letter-spacing: .05em;
         }}
 
         .ep-live-dot {{
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background: var(--ep-good);
-            box-shadow: 0 0 0 5px rgba(61,201,145,.12);
+            background: var(--ep-green);
         }}
 
-        /* Section labels */
         .ep-section-title {{
             color: var(--ep-text);
             font-size: 1.05rem;
-            font-weight: 800;
-            margin: .35rem 0 .75rem;
+            font-weight: 820;
+            margin: .4rem 0 .75rem;
         }}
 
-        .ep-section-sub {{
+        .ep-section-subtitle {{
             color: var(--ep-muted);
-            font-size: .82rem;
-            margin-top: -.48rem;
+            font-size: .8rem;
+            margin-top: -.45rem;
             margin-bottom: .8rem;
         }}
 
         /* KPI cards */
         .ep-kpi {{
-            min-height: 128px;
-            border-radius: 18px;
+            min-height: 124px;
             border: 1px solid var(--ep-border);
-            background: linear-gradient(145deg, var(--ep-panel), var(--ep-panel-2));
+            border-radius: 18px;
+            background: linear-gradient(145deg, var(--ep-panel), var(--ep-panel-alt));
             padding: 1rem 1.05rem;
-            box-shadow: 0 8px 24px rgba(0,0,0,.06);
+            box-shadow: 0 8px 24px rgba(0,0,0,.05);
         }}
 
         .ep-kpi-label {{
             color: var(--ep-muted);
-            font-size: .76rem;
-            font-weight: 700;
-            margin-bottom: .55rem;
+            font-size: .75rem;
+            font-weight: 720;
         }}
 
         .ep-kpi-value {{
@@ -482,22 +467,14 @@ st.markdown(
             font-size: 2rem;
             font-weight: 850;
             letter-spacing: -.035em;
+            margin-top: .45rem;
             line-height: 1;
         }}
 
         .ep-kpi-note {{
             color: var(--ep-muted);
-            font-size: .72rem;
-            margin-top: .62rem;
-        }}
-
-        /* Generic panel */
-        .ep-panel {{
-            border: 1px solid var(--ep-border);
-            border-radius: 18px;
-            background: var(--ep-panel);
-            padding: 1rem 1.05rem;
-            box-shadow: 0 8px 24px rgba(0,0,0,.05);
+            font-size: .7rem;
+            margin-top: .65rem;
         }}
 
         /* Lot cards */
@@ -505,52 +482,54 @@ st.markdown(
             border: 1px solid var(--ep-border);
             border-radius: 16px;
             background: var(--ep-panel);
-            padding: .9rem 1rem;
+            padding: .95rem 1rem;
             margin-bottom: .65rem;
+            box-shadow: 0 6px 20px rgba(0,0,0,.04);
         }}
 
-        .ep-lot-top {{
+        .ep-lot-head {{
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            gap: 1rem;
+            gap: .75rem;
         }}
 
         .ep-lot-name {{
             color: var(--ep-text);
-            font-size: .91rem;
-            font-weight: 780;
-            line-height: 1.3;
+            font-size: .9rem;
+            font-weight: 820;
+            line-height: 1.28;
         }}
 
         .ep-lot-meta {{
             color: var(--ep-muted);
-            font-size: .72rem;
-            margin-top: .2rem;
+            font-size: .71rem;
+            margin-top: .28rem;
         }}
 
-        .ep-status {{
+        .ep-badge {{
+            flex: 0 0 auto;
+            border: 1px solid var(--ep-border);
             border-radius: 999px;
-            padding: .28rem .52rem;
-            font-size: .65rem;
+            padding: .28rem .5rem;
+            font-size: .63rem;
             font-weight: 850;
             white-space: nowrap;
-            border: 1px solid var(--ep-border);
         }}
 
-        .ep-status-good {{
-            color: var(--ep-good);
-            background: rgba(61,201,145,.10);
+        .ep-badge-good {{
+            color: var(--ep-green);
+            background: color-mix(in srgb, var(--ep-green) 10%, transparent);
         }}
 
-        .ep-status-warn {{
-            color: var(--ep-warn);
-            background: rgba(240,184,77,.10);
+        .ep-badge-warn {{
+            color: var(--ep-amber);
+            background: color-mix(in srgb, var(--ep-amber) 10%, transparent);
         }}
 
-        .ep-status-bad {{
-            color: var(--ep-bad);
-            background: rgba(240,99,99,.10);
+        .ep-badge-bad {{
+            color: var(--ep-red);
+            background: color-mix(in srgb, var(--ep-red) 10%, transparent);
         }}
 
         .ep-progress {{
@@ -561,8 +540,7 @@ st.markdown(
             margin-top: .75rem;
         }}
 
-        .ep-progress > span {{
-            display: block;
+        .ep-progress-fill {{
             height: 100%;
             border-radius: 999px;
         }}
@@ -571,25 +549,25 @@ st.markdown(
             display: flex;
             justify-content: space-between;
             gap: 1rem;
-            margin-top: .5rem;
             color: var(--ep-muted);
-            font-size: .7rem;
+            font-size: .69rem;
+            margin-top: .5rem;
         }}
 
-        /* Recommendation */
+        /* Recommendation card */
         .ep-rec {{
             border: 1px solid var(--ep-border);
             border-radius: 18px;
             background:
-                linear-gradient(145deg, rgba(94,58,168,.14), transparent 65%),
+                linear-gradient(145deg, rgba(121,87,213,.14), transparent 65%),
                 var(--ep-panel);
-            padding: 1.1rem;
+            padding: 1.05rem;
             box-shadow: 0 8px 24px rgba(0,0,0,.05);
         }}
 
         .ep-rec-label {{
             color: var(--ep-purple);
-            font-size: .69rem;
+            font-size: .68rem;
             font-weight: 850;
             letter-spacing: .09em;
             text-transform: uppercase;
@@ -597,14 +575,14 @@ st.markdown(
 
         .ep-rec-name {{
             color: var(--ep-text);
-            font-size: 1.25rem;
+            font-size: 1.2rem;
             font-weight: 850;
-            margin-top: .35rem;
+            margin-top: .38rem;
         }}
 
         .ep-rec-grid {{
             display: grid;
-            grid-template-columns: repeat(2, minmax(0,1fr));
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: .55rem;
             margin-top: .9rem;
         }}
@@ -618,93 +596,85 @@ st.markdown(
 
         .ep-rec-stat-label {{
             color: var(--ep-muted);
-            font-size: .65rem;
-            font-weight: 700;
+            font-size: .64rem;
+            font-weight: 720;
         }}
 
         .ep-rec-stat-value {{
             color: var(--ep-text);
-            font-size: .91rem;
-            font-weight: 800;
+            font-size: .9rem;
+            font-weight: 820;
             margin-top: .2rem;
         }}
 
-        /* Story cards */
+        /* User story traceability */
         .ep-story {{
             border: 1px solid var(--ep-border);
             border-radius: 12px;
-            background: var(--ep-panel-2);
+            background: var(--ep-panel-alt);
             padding: .8rem .9rem;
             margin-bottom: .55rem;
         }}
 
         .ep-story-id {{
             color: var(--ep-purple);
-            font-size: .66rem;
+            font-size: .65rem;
             font-weight: 850;
-            letter-spacing: .06em;
+            letter-spacing: .05em;
             margin-bottom: .3rem;
         }}
 
         .ep-story-text {{
             color: var(--ep-text);
-            font-size: .82rem;
-            line-height: 1.48;
+            font-size: .81rem;
+            line-height: 1.5;
         }}
 
-        /* Streamlit controls */
-        div[data-baseweb="select"] > div,
-        div[data-baseweb="base-input"],
-        .stTextInput input,
-        .stTimeInput input {{
-            background: var(--ep-panel) !important;
-            color: var(--ep-text) !important;
+        /* Native Streamlit controls */
+        section[data-testid="stSidebar"] [data-baseweb="select"] > div,
+        section[data-testid="stSidebar"] [data-baseweb="base-input"],
+        section[data-testid="stSidebar"] input,
+        [data-testid="stMain"] [data-baseweb="select"] > div,
+        [data-testid="stMain"] [data-baseweb="base-input"],
+        [data-testid="stMain"] input {{
+            background: var(--ep-input) !important;
             border-color: var(--ep-border) !important;
-            border-radius: 10px !important;
+            color: var(--ep-input-text) !important;
         }}
 
-        div[data-baseweb="select"] span,
-        div[data-baseweb="select"] input {{
-            color: var(--ep-text) !important;
+        section[data-testid="stSidebar"] [data-baseweb="select"] *,
+        [data-testid="stMain"] [data-baseweb="select"] * {{
+            color: var(--ep-input-text) !important;
         }}
 
-        [data-baseweb="popover"],
+        section[data-testid="stSidebar"] input,
+        [data-testid="stMain"] input {{
+            -webkit-text-fill-color: var(--ep-input-text) !important;
+            opacity: 1 !important;
+        }}
+
+        section[data-testid="stSidebar"] svg,
+        [data-testid="stMain"] [data-baseweb="select"] svg {{
+            fill: var(--ep-muted) !important;
+            color: var(--ep-muted) !important;
+        }}
+
+        div[data-baseweb="popover"],
+        div[data-baseweb="menu"],
         [role="listbox"] {{
             background: var(--ep-panel) !important;
             color: var(--ep-text) !important;
         }}
 
-        [role="option"] {{
+        [role="option"],
+        [role="option"] * {{
+            background: var(--ep-panel) !important;
             color: var(--ep-text) !important;
         }}
 
-        [role="option"]:hover {{
+        [role="option"]:hover,
+        [role="option"]:hover * {{
             background: var(--ep-soft) !important;
-        }}
-
-        .stButton > button,
-        .stLinkButton > a {{
-            min-height: 2.7rem;
-            border-radius: 11px !important;
-            background: linear-gradient(135deg, var(--ep-purple-2), var(--ep-purple)) !important;
-            color: #FFFFFF !important;
-            border: 0 !important;
-            font-weight: 800 !important;
-            box-shadow: 0 8px 18px rgba(79,41,132,.18);
-        }}
-
-        .stButton > button:hover,
-        .stLinkButton > a:hover {{
-            filter: brightness(1.08);
-            transform: translateY(-1px);
-        }}
-
-        .stButton > button:focus-visible,
-        .stLinkButton > a:focus-visible,
-        input:focus-visible,
-        [role="radiogroup"] label:focus-within {{
-            outline: 3px solid var(--ep-gold) !important;
-            outline-offset: 2px;
         }}
 
         div[data-testid="stExpander"] {{
@@ -714,9 +684,9 @@ st.markdown(
             overflow: hidden;
         }}
 
-        div[data-testid="stExpander"] summary {{
+        div[data-testid="stExpander"] summary,
+        div[data-testid="stExpander"] summary * {{
             color: var(--ep-text) !important;
-            font-weight: 760;
         }}
 
         div[data-testid="stAlert"] {{
@@ -724,9 +694,34 @@ st.markdown(
             border: 1px solid var(--ep-border) !important;
         }}
 
+        .stLinkButton > a {{
+            min-height: 2.7rem;
+            border-radius: 11px !important;
+            background: linear-gradient(
+                135deg,
+                var(--ep-purple-strong),
+                var(--ep-purple)
+            ) !important;
+            color: #FFFFFF !important;
+            border: 0 !important;
+            font-weight: 800 !important;
+            box-shadow: 0 8px 18px rgba(79,41,132,.18);
+        }}
+
+        .stLinkButton > a:hover {{
+            filter: brightness(1.08);
+        }}
+
+        .stLinkButton > a:focus-visible,
+        input:focus-visible,
+        [role="radiogroup"] label:focus-within {{
+            outline: 3px solid var(--ep-gold) !important;
+            outline-offset: 2px;
+        }}
+
         /* Map */
         .stDeckGlJsonChart {{
-            min-height: 500px;
+            min-height: 510px;
             border-radius: 18px;
             overflow: hidden;
             border: 1px solid var(--ep-border);
@@ -734,22 +729,17 @@ st.markdown(
             box-shadow: 0 8px 24px rgba(0,0,0,.05);
         }}
 
-        /* Hide some Streamlit chrome during demos */
         [data-testid="stToolbar"] {{
             opacity: .35;
         }}
 
-        /* Responsive layout */
+        /* Responsive breakpoints */
         @media (max-width: 980px) {{
             [data-testid="stAppViewBlockContainer"] {{
                 padding: 1rem 1rem 2rem !important;
             }}
 
-            .ep-hero {{
-                border-radius: 18px;
-            }}
-
-            .ep-hero-grid {{
+            .ep-hero-row {{
                 align-items: flex-start;
                 flex-wrap: wrap;
             }}
@@ -761,28 +751,20 @@ st.markdown(
 
         @media (max-width: 640px) {{
             [data-testid="stAppViewBlockContainer"] {{
-                padding: .65rem .65rem 1.5rem !important;
+                padding: .7rem .65rem 1.5rem !important;
             }}
 
             .ep-hero {{
+                border-radius: 16px;
                 padding: 1rem;
-                border-radius: 15px;
             }}
 
-            .ep-hero-title {{
+            .ep-title {{
                 font-size: 1.5rem;
             }}
 
-            .ep-hero-sub {{
+            .ep-subtitle {{
                 font-size: .84rem;
-            }}
-
-            .ep-live-chip {{
-                width: fit-content;
-            }}
-
-            .ep-kpi {{
-                min-height: 108px;
             }}
 
             .ep-rec-grid {{
@@ -799,15 +781,31 @@ st.markdown(
 )
 
 
-# Sidebar brand
+# Small helper: remove newlines so Markdown never prints HTML as code.
+def render_html(html):
+    compact = " ".join(line.strip() for line in html.splitlines())
+    st.markdown(compact, unsafe_allow_html=True)
+
+
+# Sidebar branding
+if LOGO_PATH.exists():
+    st.sidebar.image(str(LOGO_PATH), use_container_width=True)
+else:
+    render_html(
+        """
+        <div class="ep-logo-shell">
+            <div style="color:#4F2984;font-size:1.4rem;font-weight:900;text-align:center;">
+                TENNESSEE TECH
+            </div>
+        </div>
+        """
+    )
+
 st.sidebar.markdown(
     """
-    <div class="ep-sidebar-brand">
-        <div class="ep-sidebar-mark">TTU</div>
-        <div>
-            <div class="ep-sidebar-title">EaglePark AI</div>
-            <div class="ep-sidebar-sub">Smart campus mobility</div>
-        </div>
+    <div class="ep-brand-copy">
+        <div class="ep-brand-title">EaglePark AI</div>
+        <div class="ep-brand-subtitle">Smart campus mobility prototype</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -816,6 +814,7 @@ st.sidebar.markdown(
 
 # Sidebar navigation
 st.sidebar.markdown("### Navigation")
+
 active_page = st.sidebar.radio(
     "Application Module",
     [
@@ -844,12 +843,11 @@ selected_t_number = st.sidebar.selectbox(
 account = INSTITUTIONAL_ACCOUNTS[selected_t_number]
 user_permit = account["permit"]
 
-permit_label = (
-    f"{user_permit} permit"
-    if user_permit in {"Purple", "Gold"}
-    else "No campus permit"
+permit_text = (
+    f"{user_permit} permit" if user_permit in {"Purple", "Gold"} else "No campus permit"
 )
-st.sidebar.caption(f"Permit access: {permit_label}")
+
+st.sidebar.caption(f"Permit access: {permit_text}")
 
 traffic_preset = st.sidebar.selectbox(
     "Traffic Scenario",
@@ -862,9 +860,7 @@ traffic_preset = st.sidebar.selectbox(
 )
 
 st.sidebar.divider()
-st.sidebar.caption(
-    "Prototype data is simulated for presentation and testing."
-)
+st.sidebar.caption("Prototype values are simulated for demonstration.")
 
 facilities_df = get_ttu_facilities(traffic_preset)
 recommended_lot = recommend_lot(facilities_df, user_permit)
@@ -872,85 +868,81 @@ recommended_lot = recommend_lot(facilities_df, user_permit)
 
 # Reusable UI helpers
 def render_hero(title, subtitle):
-    st.markdown(
+    render_html(
         f"""
         <div class="ep-hero">
-            <div class="ep-hero-grid">
+            <div class="ep-hero-row">
                 <div>
-                    <div class="ep-hero-kicker">EaglePark AI · CSC 4610</div>
-                    <h1 class="ep-hero-title">{title}</h1>
-                    <div class="ep-hero-sub">{subtitle}</div>
+                    <div class="ep-kicker">EaglePark AI · CSC 4610</div>
+                    <h1 class="ep-title">{title}</h1>
+                    <div class="ep-subtitle">{subtitle}</div>
                 </div>
-                <div class="ep-live-chip">
+                <div class="ep-live">
                     <span class="ep-live-dot"></span>
                     SIMULATION ONLINE
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
-def kpi_card(label, value, note):
-    st.markdown(
+def render_kpi(label, value, note):
+    render_html(
         f"""
         <div class="ep-kpi">
             <div class="ep-kpi-label">{label}</div>
             <div class="ep-kpi-value">{value}</div>
             <div class="ep-kpi-note">{note}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def status_class(status):
     if status == "AVAILABLE":
-        return "ep-status-good"
+        return "ep-badge-good"
     if status == "FILLING FAST":
-        return "ep-status-warn"
-    return "ep-status-bad"
+        return "ep-badge-warn"
+    return "ep-badge-bad"
 
 
-def status_color(status):
+def status_fill(status):
     if status == "AVAILABLE":
-        return "var(--ep-good)"
+        return "var(--ep-green)"
     if status == "FILLING FAST":
-        return "var(--ep-warn)"
-    return "var(--ep-bad)"
+        return "var(--ep-amber)"
+    return "var(--ep-red)"
 
 
-def lot_card(row):
-    st.markdown(
+def render_lot_card(row):
+    width = min(float(row["pct_full"]), 100.0)
+
+    render_html(
         f"""
         <div class="ep-lot-card">
-            <div class="ep-lot-top">
+            <div class="ep-lot-head">
                 <div>
                     <div class="ep-lot-name">{row["name"]}</div>
                     <div class="ep-lot-meta">
-                        {row["permit_required"]} permit · {row["capacity"]} total spaces
+                        {row["permit_required"]} permit · {int(row["capacity"])} total spaces
                     </div>
                 </div>
-                <div class="ep-status {status_class(row["status"])}">
+                <div class="ep-badge {status_class(row["status"])}">
                     {row["status"]}
                 </div>
             </div>
-
             <div class="ep-progress">
-                <span style="
-                    width:{min(row["pct_full"], 100):.1f}%;
-                    background:{status_color(row["status"])};
-                "></span>
+                <div class="ep-progress-fill"
+                     style="width:{width:.1f}%;background:{status_fill(row["status"])};">
+                </div>
             </div>
-
             <div class="ep-lot-foot">
                 <span>{row["pct_full"]:.0f}% occupied</span>
-                <span><strong>{row["available"]}</strong> open</span>
+                <span><strong>{int(row["available"])}</strong> open</span>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -962,35 +954,26 @@ def render_story_traceability(feature_name):
 
     with st.expander("User story traceability", expanded=False):
         st.caption(
-            "These are the CSC 4610 stories connected to this part of the prototype."
+            "These CSC 4610 user stories are connected to this part of the prototype."
         )
+
         for story in stories:
-            st.markdown(
+            render_html(
                 f"""
                 <div class="ep-story">
                     <div class="ep-story-id">
-                        {story["id"]} · Board #{story["board_number"]} · Issue #{story["github_issue"]}
+                        {story["id"]} · Board #{story["board_number"]} ·
+                        Issue #{story["github_issue"]}
                     </div>
                     <div class="ep-story-text">{story["story"]}</div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
 
-def render_recommendation(destination):
+def render_recommendation():
     if recommended_lot is None:
-        st.markdown(
-            """
-            <div class="ep-panel">
-                <div class="ep-section-title">No permitted route available</div>
-                <div class="ep-section-sub">
-                    This profile does not currently have Purple or Gold parking access.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.info("This profile does not currently have Purple or Gold parking access.")
         return
 
     gps_link = (
@@ -999,33 +982,31 @@ def render_recommendation(destination):
         "&travelmode=driving"
     )
 
-    st.markdown(
+    render_html(
         f"""
         <div class="ep-rec">
             <div class="ep-rec-label">Recommended parking</div>
             <div class="ep-rec-name">{recommended_lot["name"]}</div>
-
             <div class="ep-rec-grid">
                 <div class="ep-rec-stat">
                     <div class="ep-rec-stat-label">Open spaces</div>
-                    <div class="ep-rec-stat-value">{recommended_lot["available"]}</div>
+                    <div class="ep-rec-stat-value">{int(recommended_lot["available"])}</div>
                 </div>
                 <div class="ep-rec-stat">
-                    <div class="ep-rec-stat-label">Current occupancy</div>
+                    <div class="ep-rec-stat-label">Occupancy</div>
                     <div class="ep-rec-stat-value">{recommended_lot["pct_full"]:.0f}%</div>
                 </div>
                 <div class="ep-rec-stat">
-                    <div class="ep-rec-stat-label">Permit match</div>
+                    <div class="ep-rec-stat-label">Permit</div>
                     <div class="ep-rec-stat-value">{recommended_lot["permit_required"]}</div>
                 </div>
                 <div class="ep-rec-stat">
-                    <div class="ep-rec-stat-label">Estimated walk</div>
+                    <div class="ep-rec-stat-label">Walk estimate</div>
                     <div class="ep-rec-stat-value">~{recommended_lot["walk_mins"]} min</div>
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     st.link_button(
@@ -1033,13 +1014,6 @@ def render_recommendation(destination):
         url=gps_link,
         use_container_width=True,
     )
-
-    primary_hub = facilities_df[facilities_df["id"] == "LOT-LIB"].iloc[0]
-    if primary_hub["pct_full"] >= 90 and user_permit == "Purple":
-        st.warning(
-            f"Volpe Library Lot is {primary_hub['pct_full']:.0f}% full. "
-            f"EaglePark recommends {recommended_lot['short_code']} instead."
-        )
 
 
 def render_map():
@@ -1103,34 +1077,48 @@ def render_map():
     st.pydeck_chart(
         pdk.Deck(
             map_style=None,
-            layers=[satellite_tiles, building_nodes, lot_nodes, lot_labels],
+            layers=[
+                satellite_tiles,
+                building_nodes,
+                lot_nodes,
+                lot_labels,
+            ],
             initial_view_state=deck_view,
             tooltip={
-                "text": "{name}\nStatus: {status}\nOpen spaces: {available} / {capacity}"
+                "text": (
+                    "{name}\nStatus: {status}\nOpen spaces: {available} / {capacity}"
+                )
             },
         ),
         use_container_width=True,
     )
 
 
-def render_lot_grid():
+def render_two_column_lot_grid():
     rows = facilities_df.reset_index(drop=True)
 
     for start in range(0, len(rows), 2):
-        cols = st.columns(2, gap="medium")
-        for offset, col in enumerate(cols):
-            idx = start + offset
-            if idx < len(rows):
-                with col:
-                    lot_card(rows.iloc[idx])
+        columns = st.columns(2, gap="medium")
+
+        for offset, column in enumerate(columns):
+            index = start + offset
+
+            if index < len(rows):
+                with column:
+                    render_lot_card(rows.iloc[index])
+
+
+def render_lot_list():
+    for _, row in facilities_df.iterrows():
+        render_lot_card(row)
 
 
 # Overview
 if active_page == "Overview":
     render_hero(
         "Campus mobility at a glance",
-        "A single view of current parking pressure, permit-aware recommendations, "
-        "and the campus conditions driving EaglePark decisions.",
+        "Current parking pressure, permit-aware recommendations, and the "
+        "conditions driving EaglePark decisions.",
     )
 
     total_capacity = int(facilities_df["capacity"].sum())
@@ -1141,37 +1129,27 @@ if active_page == "Overview":
     saturated_count = int((facilities_df["pct_full"] >= 90).sum())
 
     k1, k2, k3, k4 = st.columns(4, gap="medium")
+
     with k1:
-        kpi_card("Campus capacity", f"{total_capacity:,}", "Tracked demo spaces")
+        render_kpi("Campus capacity", f"{total_capacity:,}", "Tracked demo spaces")
     with k2:
-        kpi_card("Open spaces", f"{total_available:,}", "Across all demo lots")
+        render_kpi("Open spaces", f"{total_available:,}", "Across all demo lots")
     with k3:
-        kpi_card("Campus occupancy", f"{campus_full_pct:.0f}%", "Current traffic scenario")
+        render_kpi("Campus occupancy", f"{campus_full_pct:.0f}%", "Selected scenario")
     with k4:
-        kpi_card("Saturated lots", str(saturated_count), "At or above 90%")
+        render_kpi("Saturated lots", str(saturated_count), "At or above 90%")
 
-    st.markdown(
-        '<div class="ep-section-title">Parking conditions</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="ep-section-sub">Live-style presentation view using simulated occupancy data.</div>',
-        unsafe_allow_html=True,
-    )
+    main_left, main_right = st.columns([1.55, 1], gap="large")
 
-    left, right = st.columns([1.55, 1], gap="large")
+    with main_left:
+        render_html('<div class="ep-section-title">Parking conditions</div>')
+        render_two_column_lot_grid()
 
-    with left:
-        render_lot_grid()
-
-    with right:
-        st.markdown(
-            '<div class="ep-section-title">Best option for this profile</div>',
-            unsafe_allow_html=True,
-        )
-        render_recommendation("Campus")
+    with main_right:
+        render_html('<div class="ep-section-title">Best option for this profile</div>')
+        render_recommendation()
         st.caption(
-            "Recommendation logic uses permit access, occupancy, and walking distance."
+            "Recommendation uses permit access, occupancy, and walking distance."
         )
 
     render_story_traceability("Dashboard")
@@ -1181,29 +1159,23 @@ if active_page == "Overview":
 elif active_page == "Predictive Parking":
     render_hero(
         "Predictive parking",
-        "Forecast-focused workspace for helping commuters avoid lots that are likely "
-        "to fill before they arrive.",
+        "A forecast workspace designed to help commuters avoid lots that are "
+        "likely to fill before they arrive.",
     )
 
     st.info(
-        "The current build shows the occupancy baseline. "
-        "The next implementation step adds the 20-minute forecast and fill-up alert."
+        "This build shows the current occupancy baseline. "
+        "The next feature adds the 20-minute forecast and projected-fill alert."
     )
 
-    left, right = st.columns([1, 1.35], gap="large")
+    left, right = st.columns([0.9, 1.55], gap="large")
 
     with left:
-        st.markdown(
-            '<div class="ep-section-title">Current occupancy</div>',
-            unsafe_allow_html=True,
-        )
-        render_lot_grid()
+        render_html('<div class="ep-section-title">Current occupancy</div>')
+        render_lot_list()
 
     with right:
-        st.markdown(
-            '<div class="ep-section-title">Campus view</div>',
-            unsafe_allow_html=True,
-        )
+        render_html('<div class="ep-section-title">Campus view</div>')
         render_map()
 
     render_story_traceability("Predictive Parking")
@@ -1213,41 +1185,29 @@ elif active_page == "Predictive Parking":
 elif active_page == "Smart Route":
     render_hero(
         "Smart route",
-        "Permit-aware parking guidance that reacts to campus saturation and helps "
-        "the driver choose a practical arrival lot.",
+        "Permit-aware parking guidance that reacts to campus saturation "
+        "and suggests a practical arrival lot.",
     )
 
-    left, right = st.columns([.9, 1.5], gap="large")
+    left, right = st.columns([0.85, 1.55], gap="large")
 
     with left:
-        st.markdown(
-            '<div class="ep-section-title">Route setup</div>',
-            unsafe_allow_html=True,
-        )
+        render_html('<div class="ep-section-title">Route setup</div>')
 
         selected_destination = st.selectbox(
             "Campus destination",
             CAMPUS_LANDMARKS["name"].tolist(),
         )
 
-        st.markdown(
-            '<div class="ep-section-title" style="margin-top:1rem;">Recommendation</div>',
-            unsafe_allow_html=True,
-        )
-        render_recommendation(selected_destination)
+        render_html('<div class="ep-section-title">Recommendation</div>')
+        render_recommendation()
 
     with right:
-        st.markdown(
-            '<div class="ep-section-title">Campus map</div>',
-            unsafe_allow_html=True,
-        )
+        render_html('<div class="ep-section-title">Campus map</div>')
         render_map()
 
-    st.markdown(
-        '<div class="ep-section-title">All parking lots</div>',
-        unsafe_allow_html=True,
-    )
-    render_lot_grid()
+    render_html('<div class="ep-section-title">All parking lots</div>')
+    render_two_column_lot_grid()
 
     render_story_traceability("Smart Route")
 
@@ -1256,30 +1216,24 @@ elif active_page == "Smart Route":
 elif active_page == "RideShare":
     render_hero(
         "RideShare",
-        "Planned commuter-matching workspace based on arrival time, destination, "
-        "role, and proximity while keeping the rider in control.",
+        "Planned commuter matching based on arrival time, destination, "
+        "role, and proximity while keeping the user in control.",
     )
 
     st.info(
-        "RideShare matching is the next major workflow after Predictive Parking. "
-        "The page is shown now so the presentation matches the project epics."
+        "RideShare matching follows Predictive Parking in the build sequence. "
+        "The page remains visible so the application matches the project epics."
     )
 
     left, right = st.columns(2, gap="large")
 
     with left:
-        st.markdown(
-            '<div class="ep-section-title">Trip details</div>',
-            unsafe_allow_html=True,
-        )
+        render_html('<div class="ep-section-title">Trip details</div>')
         st.text_input("Approximate origin / area", disabled=True)
         st.time_input("Target campus arrival", disabled=True)
 
     with right:
-        st.markdown(
-            '<div class="ep-section-title">Match preferences</div>',
-            unsafe_allow_html=True,
-        )
+        render_html('<div class="ep-section-title">Match preferences</div>')
         st.selectbox(
             "Ride preference",
             ["Need a ride", "Offering a ride"],
@@ -1292,8 +1246,8 @@ elif active_page == "RideShare":
         )
 
     st.caption(
-        "Planned: verified driver records, timetable/proximity matching, "
-        "detour estimates, and evaluation failure cases."
+        "Planned: verified drivers, timetable/proximity matching, "
+        "detour estimates, and Lab 5 failure tests."
     )
 
     render_story_traceability("RideShare")
@@ -1303,8 +1257,8 @@ elif active_page == "RideShare":
 else:
     render_hero(
         "Operations & evaluation",
-        "Administrative view for lot pressure, system evaluation, and the failure "
-        "cases defined in the CSC 4610 labs.",
+        "Administrative view for parking pressure, system evaluation, "
+        "and the failure cases defined in the CSC 4610 labs.",
     )
 
     full_90 = int((facilities_df["pct_full"] >= 90).sum())
@@ -1312,52 +1266,35 @@ else:
     total_open = int(facilities_df["available"].sum())
 
     k1, k2, k3 = st.columns(3, gap="medium")
+
     with k1:
-        kpi_card("Lots ≥ 90%", str(full_90), "Immediate attention")
+        render_kpi("Lots ≥ 90%", str(full_90), "Immediate attention")
     with k2:
-        kpi_card("Lots ≥ 75%", str(full_75), "Filling or saturated")
+        render_kpi("Lots ≥ 75%", str(full_75), "Filling or saturated")
     with k3:
-        kpi_card("Open spaces", f"{total_open:,}", "Across all demo lots")
+        render_kpi("Open spaces", f"{total_open:,}", "Across all demo lots")
 
     left, right = st.columns(2, gap="large")
 
     with left:
-        st.markdown(
-            '<div class="ep-section-title">Lab 5 evaluation</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            """
-            <div class="ep-panel">
-                <strong>Planned evaluation surface</strong><br><br>
-                Functional metrics, similarity-based metrics, the AI-judge
-                criterion, and failure-case results will be shown here.
-            </div>
-            """,
-            unsafe_allow_html=True,
+        render_html('<div class="ep-section-title">Lab 5 evaluation</div>')
+        st.info(
+            "This area will display functional metrics, similarity metrics, "
+            "the AI-judge criterion, and failure-case results."
         )
 
     with right:
-        st.markdown(
-            '<div class="ep-section-title">Failure tests</div>',
-            unsafe_allow_html=True,
-        )
+        render_html('<div class="ep-section-title">Failure tests</div>')
         st.markdown(
             """
-            <div class="ep-panel">
-                <strong>1.</strong> Invalid or non-existent rideshare recommendation.<br><br>
-                <strong>2.</strong> A matched participant is flagged as a no-show.<br><br>
-                <strong>3.</strong> A removed rideshare user is still recommended.<br><br>
-                <strong>4.</strong> Parking data is stale, unavailable, or incorrect.
-            </div>
-            """,
-            unsafe_allow_html=True,
+            1. Invalid or non-existent rideshare recommendation.
+            2. A matched participant is flagged as a no-show.
+            3. A removed rideshare user is still recommended.
+            4. Parking data is stale, unavailable, or incorrect.
+            """
         )
 
-    st.markdown(
-        '<div class="ep-section-title">Current lot pressure</div>',
-        unsafe_allow_html=True,
-    )
-    render_lot_grid()
+    render_html('<div class="ep-section-title">Current lot pressure</div>')
+    render_two_column_lot_grid()
 
     render_story_traceability("Admin & Evaluation")
