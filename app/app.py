@@ -406,14 +406,14 @@ else:
         "bg": "#F3F6FB",
         "sidebar": "#FFFFFF",
         "panel": "#FFFFFF",
-        "panel_2": "#F8FAFD",
-        "panel_3": "#EEF3F9",
-        "border": "#D4DFEB",
+        "panel_2": "#FAFBFE",
+        "panel_3": "#F0F2F8",
+        "border": "#D9DFEA",
         "text": "#172033",
         "muted": "#63748A",
-        "purple": "#6F4BC3",
-        "purple_2": "#5B3A9F",
-        "gold": "#8A6500",
+        "purple": "#7A6BE8",
+        "purple_2": "#6557C9",
+        "gold": "#8A6A13",
         "green": "#157A50",
         "amber": "#996000",
         "red": "#B42318",
@@ -504,7 +504,7 @@ st.markdown(
             border: 1px solid var(--ep-border);
             border-radius: 20px;
             background:
-                radial-gradient(circle at 50% 12%, rgba(196,167,255,.16), transparent 35%),
+                radial-gradient(circle at 50% 12%, color-mix(in srgb, var(--ep-purple) 14%, transparent), transparent 35%),
                 linear-gradient(160deg, rgba(108,53,212,.16), transparent 64%),
                 var(--ep-panel);
             padding: .9rem .85rem .95rem;
@@ -561,12 +561,8 @@ st.markdown(
         }}
 
         section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
-            background: linear-gradient(
-                90deg,
-                rgba(139,92,246,.34),
-                rgba(196,167,255,.14)
-            );
-            border-color: rgba(196,167,255,.64);
+            background: color-mix(in srgb, var(--ep-purple) 12%, var(--ep-panel));
+            border-color: color-mix(in srgb, var(--ep-purple) 35%, var(--ep-border));
             box-shadow: inset 3px 0 0 var(--ep-purple);
         }}
 
@@ -582,9 +578,9 @@ st.markdown(
             border: 1px solid var(--ep-border);
             border-radius: 22px;
             background:
-                radial-gradient(circle at 82% 4%, rgba(196,167,255,.20), transparent 31%),
+                radial-gradient(circle at 82% 4%, color-mix(in srgb, var(--ep-purple) 18%, transparent), transparent 31%),
                 radial-gradient(circle at 92% 82%, rgba(247,201,69,.10), transparent 24%),
-                linear-gradient(135deg, rgba(139,92,246,.11), transparent 60%),
+                linear-gradient(135deg, color-mix(in srgb, var(--ep-purple-2) 9%, transparent), transparent 60%),
                 var(--ep-panel);
             padding: 1.3rem 1.5rem;
             margin-bottom: 1rem;
@@ -599,10 +595,10 @@ st.markdown(
             width: 240px;
             height: 240px;
             border-radius: 50%;
-            border: 1px solid rgba(196,167,255,.16);
+            border: 1px solid color-mix(in srgb, var(--ep-purple) 14%, transparent);
             box-shadow:
-                0 0 0 34px rgba(196,167,255,.028),
-                0 0 0 68px rgba(196,167,255,.020);
+                0 0 0 34px color-mix(in srgb, var(--ep-purple) 3%, transparent),
+                0 0 0 68px color-mix(in srgb, var(--ep-purple) 2%, transparent);
         }}
 
         .ep-hero-row {{
@@ -827,10 +823,10 @@ st.markdown(
 
         /* Recommendation */
         .ep-rec {{
-            border: 1px solid rgba(196,167,255,.38);
+            border: 1px solid color-mix(in srgb, var(--ep-purple) 34%, var(--ep-border));
             border-radius: 18px;
             background:
-                linear-gradient(145deg, rgba(139,92,246,.14), transparent 65%),
+                linear-gradient(145deg, color-mix(in srgb, var(--ep-purple-2) 12%, transparent), transparent 65%),
                 var(--ep-panel);
             padding: 1rem;
             box-shadow: 0 8px 24px rgba(0,0,0,.05);
@@ -903,10 +899,10 @@ st.markdown(
 
         /* Traceability */
         .ep-trace-banner {{
-            border: 1px solid rgba(196,167,255,.46);
+            border: 1px solid color-mix(in srgb, var(--ep-purple) 38%, var(--ep-border));
             border-radius: 16px;
             background:
-                linear-gradient(90deg, rgba(139,92,246,.20), rgba(196,167,255,.08)),
+                linear-gradient(90deg, color-mix(in srgb, var(--ep-purple-2) 16%, transparent), color-mix(in srgb, var(--ep-purple) 7%, transparent)),
                 var(--ep-panel);
             padding: .82rem .95rem;
             margin-top: .45rem;
@@ -951,7 +947,7 @@ st.markdown(
             border: 1px solid var(--ep-border);
             border-radius: 17px;
             background:
-                linear-gradient(145deg, rgba(139,92,246,.09), transparent 62%),
+                linear-gradient(145deg, color-mix(in srgb, var(--ep-purple-2) 8%, transparent), transparent 62%),
                 var(--ep-panel);
             padding: .9rem;
             margin-bottom: .65rem;
@@ -982,8 +978,8 @@ st.markdown(
             min-width: 60px;
             text-align: center;
             border-radius: 13px;
-            border: 1px solid rgba(196,167,255,.40);
-            background: rgba(139,92,246,.11);
+            border: 1px solid color-mix(in srgb, var(--ep-purple) 34%, var(--ep-border));
+            background: color-mix(in srgb, var(--ep-purple-2) 9%, transparent);
             padding: .45rem .52rem;
         }}
 
@@ -1115,10 +1111,10 @@ st.markdown(
         }}
 
         .ep-phone {{
-            border: 1px solid rgba(196,167,255,.50);
+            border: 1px solid color-mix(in srgb, var(--ep-purple) 42%, var(--ep-border));
             border-radius: 22px;
             background:
-                radial-gradient(circle at 90% 6%, rgba(196,167,255,.18), transparent 32%),
+                radial-gradient(circle at 90% 6%, color-mix(in srgb, var(--ep-purple) 16%, transparent), transparent 32%),
                 #091423;
             color: #F7FAFE;
             padding: .82rem;
@@ -1351,8 +1347,8 @@ def render_brand():
                 <svg class="ep-brand-mark" viewBox="0 0 120 120" aria-label="EaglePark AI logo">
                     <defs>
                         <linearGradient id="epg" x1="0" x2="1" y1="0" y2="1">
-                            <stop offset="0%" stop-color="#8B5CF6"/>
-                            <stop offset="100%" stop-color="#5B21B6"/>
+                            <stop offset="0%" stop-color="var(--ep-purple)"/>
+                            <stop offset="100%" stop-color="var(--ep-purple-2)"/>
                         </linearGradient>
                     </defs>
                     <rect x="3" y="3" width="114" height="114" rx="28"
@@ -1366,15 +1362,15 @@ def render_brand():
                     <path d="M60 40 L72 53 L60 67 L48 53 Z"
                           fill="#F7C945"/>
                     <path d="M60 67 L76 82 L60 78 L44 82 Z"
-                          fill="#C4A7FF"/>
+                          fill="var(--ep-purple)"/>
                     <path d="M60 31 V18 M34 31 L27 20 M86 31 L93 20"
-                          fill="none" stroke="#C4A7FF" stroke-width="3"
+                          fill="none" stroke="var(--ep-purple)" stroke-width="3"
                           stroke-linecap="round"/>
                     <circle cx="60" cy="15" r="5" fill="#F7C945"/>
-                    <circle cx="24" cy="17" r="4" fill="#C4A7FF"/>
-                    <circle cx="96" cy="17" r="4" fill="#C4A7FF"/>
-                    <circle cx="20" cy="40" r="4" fill="#C4A7FF"/>
-                    <circle cx="100" cy="40" r="4" fill="#C4A7FF"/>
+                    <circle cx="24" cy="17" r="4" fill="var(--ep-purple)"/>
+                    <circle cx="96" cy="17" r="4" fill="var(--ep-purple)"/>
+                    <circle cx="20" cy="40" r="4" fill="var(--ep-purple)"/>
+                    <circle cx="100" cy="40" r="4" fill="var(--ep-purple)"/>
                 </svg>
                 <div>
                     <div class="ep-brand-title">
